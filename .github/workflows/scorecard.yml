@@ -28,24 +28,55 @@ jobs:
           results_format: sarif
           publish_results: true
 
+      - name: Upload Scorecard SARIF
+        uses: github/codeql-action/upload-sarif@e46ed2cbd01164d986452f91f178727624ae40d7 # v4
+        with:
+          sarif_file: scorecard.sarif
+
+  scorecard-summary:
+    name: Scorecard Summary
+    needs: scorecard
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
       - name: Write Scorecard summary
-        if: always()
         shell: bash
         run: |
+          results_url="https://api.scorecard.dev/projects/github.com/${GITHUB_REPOSITORY}"
+          viewer_url="https://scorecard.dev/viewer/?uri=github.com/${GITHUB_REPOSITORY}"
+          code_scanning_url="https://github.com/${GITHUB_REPOSITORY}/security/code-scanning"
+
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error "$results_url" --output scorecard.json; then
+              break
+            fi
+
+            if [ "$attempt" -eq 5 ]; then
+              rm -f scorecard.json
+              break
+            fi
+
+            sleep 10
+          done
+
           {
             echo "## OpenSSF Scorecard"
             echo
             echo "- Repository: \`${GITHUB_REPOSITORY}\`"
             echo "- Commit: \`${GITHUB_SHA}\`"
-            echo "- Published results: https://scorecard.dev/viewer/?uri=github.com/${GITHUB_REPOSITORY}"
-            echo "- Code scanning alerts: https://github.com/${GITHUB_REPOSITORY}/security/code-scanning"
+            echo "- Published results: ${viewer_url}"
+            echo "- Code scanning alerts: ${code_scanning_url}"
             echo
 
-            if [ -f results.json ]; then
-              score="$(jq -r '.score // "unknown"' results.json)"
-              scan_date="$(jq -r '.date // "unknown"' results.json)"
+            if [ -f scorecard.json ]; then
+              score="$(jq -r '.score // "unknown"' scorecard.json)"
+              scan_date="$(jq -r '.date // "unknown"' scorecard.json)"
+              commit="$(jq -r '.repo.commit // "unknown"' scorecard.json)"
               echo "- Score: \`${score}\`"
               echo "- Scan date: \`${scan_date}\`"
+              echo "- Result commit: \`${commit}\`"
               echo
               echo "### Checks"
               echo
@@ -55,30 +86,9 @@ jobs:
                 def esc: tostring | gsub("\\|"; "\\|") | gsub("\n"; "<br>");
                 .checks[]
                 | "| \(.name | esc) | \(.score | esc) | \(.reason | esc) |"
-              ' results.json
-            elif [ -f scorecard.sarif ]; then
-              echo "Scorecard SARIF was generated, but the JSON summary was unavailable."
-              echo
-              echo "### Findings"
-              echo
-              echo "| Check | Summary |"
-              echo "| --- | --- |"
-              jq -r '
-                def esc: tostring | gsub("\\|"; "\\|") | gsub("\n"; "<br>");
-                .runs[0] as $run
-                | ($run.tool.driver.rules // []) as $rules
-                | ($run.results // [])[]
-                | .ruleId as $id
-                | ($rules[]? | select(.id == $id) | .name) as $name
-                | "| \(($name // $id) | esc) | \(.message.text | esc) |"
-              ' scorecard.sarif
+              ' scorecard.json
             else
-              echo "No Scorecard result file was produced."
+              echo "Published Scorecard results were not available yet. Use the published results link above."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Scorecard SARIF
-        uses: github/codeql-action/upload-sarif@e46ed2cbd01164d986452f91f178727624ae40d7 # v4
-        with:
-          sarif_file: scorecard.sarif
 
