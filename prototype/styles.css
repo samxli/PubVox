@@ -394,7 +394,7 @@ h2 {
 }
 
 .skip-button svg {
-  fill: currentColor;
+  fill: currentcolor;
 }
 
 .skip-triangle {
@@ -402,7 +402,7 @@ h2 {
 }
 
 .skip-button text {
-  fill: currentColor;
+  fill: currentcolor;
   stroke: none;
   font-size: 10px;
   font-weight: 900;
@@ -416,7 +416,7 @@ h2 {
 }
 
 .play-button svg {
-  fill: currentColor;
+  fill: currentcolor;
   width: 32px;
   height: 32px;
 }

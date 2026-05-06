@@ -43,18 +43,12 @@ const books = [
   },
 ];
 
-const state = {
-  activeBookId: localStorage.getItem("pubvox.activeBookId") || books[0].id,
-  isPlaying: false,
 const savedElapsedPercent = localStorage.getItem("pubvox.elapsedPercent");
 
 const state = {
   activeBookId: localStorage.getItem("pubvox.activeBookId") || books[0].id,
   isPlaying: false,
   elapsedPercent: savedElapsedPercent !== null ? Number(savedElapsedPercent) : 42,
-  processingTimer: null,
-  playbackTimer: null,
-};
   processingTimer: null,
   playbackTimer: null,
 };
@@ -174,17 +168,23 @@ function setPlaying(isPlaying) {
   render();
 }
 
-function skip(delta) {
-  state.elapsedPercent = Math.max(0, Math.min(100, state.elapsedPercent + delta));
+function skip(seconds) {
+  const durationSeconds = durationToSeconds(currentChapter().duration);
+  const percentDelta = (seconds / durationSeconds) * 100;
+  state.elapsedPercent = Math.max(0, Math.min(100, state.elapsedPercent + percentDelta));
   localStorage.setItem("pubvox.elapsedPercent", String(state.elapsedPercent));
   render();
 }
 
 function timeFromPercent(percent, duration) {
-  const [minutes, seconds] = duration.split(":").map(Number);
-  const totalSeconds = minutes * 60 + seconds;
+  const totalSeconds = durationToSeconds(duration);
   const elapsedSeconds = Math.floor(totalSeconds * (percent / 100));
   return `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, "0")}`;
+}
+
+function durationToSeconds(duration) {
+  const [minutes, seconds] = duration.split(":").map(Number);
+  return minutes * 60 + seconds;
 }
 
 function simulateUpload(fileName) {
@@ -229,13 +229,13 @@ function updateMediaSession(book, chapter) {
 
   navigator.mediaSession.setActionHandler("play", () => setPlaying(true));
   navigator.mediaSession.setActionHandler("pause", () => setPlaying(false));
-  navigator.mediaSession.setActionHandler("seekbackward", () => skip(-8));
-  navigator.mediaSession.setActionHandler("seekforward", () => skip(12));
+  navigator.mediaSession.setActionHandler("seekbackward", () => skip(-15));
+  navigator.mediaSession.setActionHandler("seekforward", () => skip(30));
 }
 
 dom.playToggle.addEventListener("click", () => setPlaying(!state.isPlaying));
-document.querySelector("#skip-back").addEventListener("click", () => skip(-8));
-document.querySelector("#skip-forward").addEventListener("click", () => skip(12));
+document.querySelector("#skip-back").addEventListener("click", () => skip(-15));
+document.querySelector("#skip-forward").addEventListener("click", () => skip(30));
 document.querySelector("#sort-toggle").addEventListener("click", () => {
   books.reverse();
   render();
