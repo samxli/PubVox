@@ -22,6 +22,9 @@ from pubvox.config import STATIC_DIR, UPLOAD_DIR
 from pubvox.epub_parser import parse_epub
 
 
+STATIC_ROOT = STATIC_DIR.resolve()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize local storage and SQLite tables before serving requests."""
@@ -125,26 +128,22 @@ def chapter_audio(book_id: str, position: int) -> FileResponse:
 @app.get("/")
 def index() -> FileResponse:
     """Serve the PWA shell."""
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_ROOT / "index.html")
 
 
 @app.get("/manifest.webmanifest")
 def manifest() -> FileResponse:
     """Serve the web app manifest from the static bundle."""
-    return FileResponse(STATIC_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+    return FileResponse(STATIC_ROOT / "manifest.webmanifest", media_type="application/manifest+json")
 
 
 @app.get("/{path:path}", include_in_schema=False)
 def static_fallback(path: str) -> FileResponse:
-    """Serve static assets and fall back to the PWA shell for browser routes."""
+    """Fall back to the PWA shell for browser routes outside the API."""
     if path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Not found.")
 
-    candidate = STATIC_DIR / path
-    if candidate.is_file():
-        return FileResponse(candidate)
-
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_ROOT / "index.html")
 
 
 if __name__ == "__main__":

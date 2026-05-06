@@ -8,9 +8,13 @@ so the rest of the app can be developed without external network calls.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from . import database
 from .config import AUDIO_DIR, TTS_ENABLED, TTS_VOICE
+
+
+logger = logging.getLogger(__name__)
 
 
 def process_book(book_id: str) -> None:
@@ -37,6 +41,7 @@ async def _process_book(book_id: str) -> None:
         try:
             await _synthesize(chapter["text"], output_path)
         except Exception:
+            logger.exception("TTS generation failed for book %s chapter %s", book_id, position)
             database.update_chapter_status(book_id=book_id, position=position, status="failed")
             database.update_book_status(book_id, "failed")
             return

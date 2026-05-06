@@ -82,7 +82,12 @@ def _chapter_title(soup: BeautifulSoup, fallback: str) -> str:
 
 def _clean_text(value: str) -> str:
     """Normalize whitespace while preserving paragraph breaks."""
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(line.strip() for line in value.splitlines() if line.strip())).strip()
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    paragraphs = [
+        re.sub(r"[ \t]+", " ", paragraph.replace("\n", " ")).strip()
+        for paragraph in re.split(r"\n\s*\n+", normalized)
+    ]
+    return "\n\n".join(paragraph for paragraph in paragraphs if paragraph)
 
 
 def _estimate_duration_seconds(text: str) -> int:

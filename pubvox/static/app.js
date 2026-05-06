@@ -266,6 +266,33 @@ function skip(seconds) {
   syncProgress();
 }
 
+async function advanceToNextChapter(shouldResume) {
+  const book = activeBook();
+  const chapter = currentChapter(book);
+  if (!book || !chapter) {
+    return;
+  }
+
+  const nextChapter = book.chapters[chapter.position + 1];
+  if (!nextChapter) {
+    state.elapsedSeconds = playbackDuration(chapter);
+    render();
+    await syncProgress();
+    await setPlaying(false);
+    return;
+  }
+
+  book.currentChapter = nextChapter.position;
+  state.elapsedSeconds = 0;
+  render();
+  configureAudio();
+  await syncProgress();
+
+  if (shouldResume && nextChapter.audioUrl) {
+    await setPlaying(true);
+  }
+}
+
 function playbackDuration(chapter = currentChapter()) {
   if (chapter?.audioUrl && Number.isFinite(dom.audio.duration)) {
     return dom.audio.duration;
@@ -439,6 +466,7 @@ dom.audio.addEventListener("timeupdate", () => {
   render();
 });
 dom.audio.addEventListener("loadedmetadata", render);
+dom.audio.addEventListener("ended", () => advanceToNextChapter(true));
 state.syncTimer = setInterval(syncProgress, 5000);
 
 loadBooks().catch((error) => {
