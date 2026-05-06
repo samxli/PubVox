@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       languages: ${{ steps.detect.outputs.languages }}
+      needs-autobuild: ${{ steps.detect.outputs.needs-autobuild }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -43,10 +44,12 @@ jobs:
 
           if echo "$files" | grep -Eq '\.(java|kt|kts)$'; then
             languages+=("java-kotlin")
+            needs_autobuild=true
           fi
 
           if echo "$files" | grep -Eq '\.(cs|csproj|sln)$'; then
             languages+=("csharp")
+            needs_autobuild=true
           fi
 
           if echo "$files" | grep -Eq '\.rb$'; then
@@ -55,13 +58,16 @@ jobs:
 
           if echo "$files" | grep -Eq '\.(c|cc|cpp|cxx|h|hpp|hxx)$'; then
             languages+=("c-cpp")
+            needs_autobuild=true
           fi
 
           if ((${#languages[@]} == 0)); then
             echo "languages=" >> "$GITHUB_OUTPUT"
+            echo "needs-autobuild=false" >> "$GITHUB_OUTPUT"
           else
             IFS=,
             echo "languages=${languages[*]}" >> "$GITHUB_OUTPUT"
+            echo "needs-autobuild=${needs_autobuild:-false}" >> "$GITHUB_OUTPUT"
           fi
 
   analyze:
@@ -83,6 +89,7 @@ jobs:
           languages: ${{ needs.detect-languages.outputs.languages }}
 
       - name: Autobuild
+        if: needs.detect-languages.outputs.needs-autobuild == 'true'
         uses: github/codeql-action/autobuild@e46ed2cbd01164d986452f91f178727624ae40d7 # v4
 
       - name: Perform CodeQL Analysis
