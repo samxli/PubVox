@@ -9,6 +9,7 @@ const state = {
   activeBookId: localStorage.getItem("pubvox.activeBookId"),
   elapsedSeconds: 0,
   isPlaying: false,
+  isSeekingFromState: false,
   pollTimer: null,
   syncTimer: null,
 };
@@ -63,8 +64,9 @@ async function loadBooks() {
   }
 
   const book = activeBook();
-  if (book && state.elapsedSeconds === 0 && book.resume?.elapsed_seconds) {
-    state.elapsedSeconds = book.resume.elapsed_seconds;
+  if (book?.resume && state.elapsedSeconds === 0) {
+    book.currentChapter = book.resume.chapter_index ?? book.currentChapter;
+    state.elapsedSeconds = Number(book.resume.elapsed_seconds || 0);
   }
 
   localStorage.setItem("pubvox.activeBookId", state.activeBookId || "");
@@ -233,7 +235,10 @@ function configureAudio() {
     dom.audio.dataset.source = nextSource;
     dom.audio.src = nextSource;
     dom.audio.load();
+    return;
   }
+
+  seekAudioToState();
 }
 
 async function setPlaying(isPlaying) {
@@ -244,6 +249,7 @@ async function setPlaying(isPlaying) {
 
   if (isPlaying) {
     try {
+      seekAudioToState();
       await dom.audio.play();
     } catch (error) {
       showProcessing("Playback", 100, error.message);
@@ -300,6 +306,22 @@ function playbackDuration(chapter = currentChapter()) {
   return chapter?.durationSeconds || 0;
 }
 
+function seekAudioToState() {
+  const chapter = currentChapter();
+  if (!chapter?.audioUrl || dom.audio.readyState < 1 || !Number.isFinite(dom.audio.duration)) {
+    return;
+  }
+
+  const target = Math.max(0, Math.min(dom.audio.duration, state.elapsedSeconds));
+  if (Math.abs(dom.audio.currentTime - target) < 0.5) {
+    return;
+  }
+
+  state.isSeekingFromState = true;
+  dom.audio.currentTime = target;
+  state.isSeekingFromState = false;
+}
+
 function progressPercent(book, chapter, elapsedSeconds) {
   if (!book?.chapters?.length || !chapter) {
     return 0;
@@ -319,27 +341,63 @@ function progressPercent(book, chapter, elapsedSeconds) {
 
 /** Persist the current chapter and elapsed time for cross-device resume. */
 async function syncProgress() {
-  const book = activeBook();
-  const chapter = currentChapter(book);
-  if (!book || !chapter) {
+  const payload = progressPayload();
+  if (!payload) {
     return;
   }
 
   try {
-    const updated = await api(`/api/books/${book.id}/progress`, {
+    const updated = await api(`/api/books/${payload.book.id}/progress`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chapterIndex: chapter.position,
-        elapsedSeconds: state.elapsedSeconds,
-        progressPercent: progressPercent(book, chapter, state.elapsedSeconds),
-      }),
+      body: JSON.stringify(payload.body),
     });
     replaceBook(updated);
     render();
   } catch (error) {
     console.warn("Unable to sync progress", error);
   }
+}
+
+function progressPayload() {
+  const book = activeBook();
+  const chapter = currentChapter(book);
+  if (!book || !chapter) {
+    return null;
+  }
+
+  return {
+    book,
+    body: {
+      chapterIndex: chapter.position,
+      elapsedSeconds: state.elapsedSeconds,
+      progressPercent: progressPercent(book, chapter, state.elapsedSeconds),
+    },
+  };
+}
+
+function syncProgressBeforeUnload() {
+  const payload = progressPayload();
+  if (!payload) {
+    return;
+  }
+
+  const url = `/api/books/${payload.book.id}/progress`;
+  const body = JSON.stringify(payload.body);
+
+  if (navigator.sendBeacon) {
+    const blob = new Blob([body], { type: "application/json" });
+    if (navigator.sendBeacon(url, blob)) {
+      return;
+    }
+  }
+
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true,
+  }).catch((error) => console.warn("Unable to sync progress before unload", error));
 }
 
 /** Upload an ePub and insert the returned book into the local library view. */
@@ -462,11 +520,24 @@ dom.audio.addEventListener("pause", () => {
   syncProgress();
 });
 dom.audio.addEventListener("timeupdate", () => {
+  if (state.isSeekingFromState) {
+    return;
+  }
+
   state.elapsedSeconds = dom.audio.currentTime;
   render();
 });
-dom.audio.addEventListener("loadedmetadata", render);
+dom.audio.addEventListener("loadedmetadata", () => {
+  seekAudioToState();
+  render();
+});
 dom.audio.addEventListener("ended", () => advanceToNextChapter(true));
+window.addEventListener("pagehide", syncProgressBeforeUnload);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    syncProgressBeforeUnload();
+  }
+});
 state.syncTimer = setInterval(syncProgress, 5000);
 
 loadBooks().catch((error) => {
