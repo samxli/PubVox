@@ -46,7 +46,15 @@ const books = [
 const state = {
   activeBookId: localStorage.getItem("pubvox.activeBookId") || books[0].id,
   isPlaying: false,
-  elapsedPercent: Number(localStorage.getItem("pubvox.elapsedPercent")) || 42,
+const savedElapsedPercent = localStorage.getItem("pubvox.elapsedPercent");
+
+const state = {
+  activeBookId: localStorage.getItem("pubvox.activeBookId") || books[0].id,
+  isPlaying: false,
+  elapsedPercent: savedElapsedPercent !== null ? Number(savedElapsedPercent) : 42,
+  processingTimer: null,
+  playbackTimer: null,
+};
   processingTimer: null,
   playbackTimer: null,
 };
