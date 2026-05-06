@@ -42,7 +42,7 @@ services:
 
 1. Run the container:
 
-```
+```shell
 docker-compose up -d
 ```
 
@@ -56,20 +56,20 @@ If you want to run PubVox locally without Docker or contribute to the project:
 
 1. Clone the repository:
 
-```
+```shell
 git clone https://github.com/samxli/PubVox.git
 cd PubVox
 ```
 
 1. Install dependencies:
 
-```
+```shell
 pip install -r requirements.txt
 ```
 
 1. Run the development server:
 
-```
+```shell
 python main.py
 ```
 
