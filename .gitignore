@@ -36,6 +36,7 @@ build/
 coverage/
 
 # Local generated data
+data/
 tmp/
 temp/
 .cache/

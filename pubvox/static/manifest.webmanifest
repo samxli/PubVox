@@ -1,0 +1,10 @@
+{
+  "name": "PubVox",
+  "short_name": "PubVox",
+  "description": "Self-hosted ePub to audiobook streaming.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08120c",
+  "theme_color": "#15251b",
+  "icons": []
+}

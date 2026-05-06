@@ -73,6 +73,12 @@ If you want to run PubVox locally without Docker or contribute to the project:
    python main.py
    ```
 
+   By default, uploaded books are parsed and queued without contacting the TTS provider. To enable Edge TTS generation during development:
+
+   ```shell
+   PUBVOX_TTS_ENABLED=1 python main.py
+   ```
+
 ## 🗺️ Roadmap
 
 - Core ePub parsing and chapter segmentation
