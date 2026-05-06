@@ -1,0 +1,6 @@
+beautifulsoup4
+edge-tts
+EbookLib
+fastapi
+python-multipart
+uvicorn[standard]

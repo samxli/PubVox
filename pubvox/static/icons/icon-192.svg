@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="PubVox">
+  <rect width="192" height="192" rx="44" fill="#15251b"/>
+  <circle cx="96" cy="96" r="64" fill="#08120c"/>
+  <path d="M42 96h18M76 124V68M96 140V52M116 124V68M132 96h18" fill="none" stroke="#b7f36d" stroke-width="14" stroke-linecap="round"/>
+  <text x="96" y="170" fill="#7ee6a8" font-family="Arial, sans-serif" font-size="20" font-weight="700" text-anchor="middle">PV</text>
+</svg>
