@@ -6,7 +6,7 @@
 
 ## ✨ Features
 
-- **📚 ePub to Audio:** Automatically parses your ePubs and generates high-quality audio on the fly using [Edge TTS](https://github.com/rany2/edge-tts) (or small local models like Piper).
+- **📚 ePub to Audio:** Automatically parses your ePubs and generates high-quality audio on the fly using [Edge TTS][edge-tts] (or small local models like Piper).
 - **🚗 Commute-Ready (PWA):** Built as a Progressive Web App utilizing the Media Session API. Lock your screen, connect to your car's Bluetooth, and use native media controls to play, pause, and skip—just like Spotify or Audible.
 - **🔖 Progress Sync:** Pick up exactly where you left off. PubVox syncs your listening progress across all your devices.
 - **👥 Multi-User Support:** Individual accounts with isolated libraries and playback states.
@@ -26,27 +26,27 @@ The easiest way to get PubVox running is via Docker Compose.
 
 1. Create a `docker-compose.yml` file:
 
-```yaml
-version: '3.8'
+   ```yaml
+   version: '3.8'
 
-services:
-  pubvox:
-    image: pubvox/pubvox:latest
-    container_name: pubvox
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/app/data  # Stores SQLite DB and generated audio files
-```
+   services:
+     pubvox:
+       image: pubvox/pubvox:latest
+       container_name: pubvox
+       restart: unless-stopped
+       ports:
+         - "8000:8000"
+       volumes:
+         - ./data:/app/data  # SQLite DB and generated audio
+   ```
 
-1. Run the container:
+2. Run the container:
 
-```shell
-docker-compose up -d
-```
+   ```shell
+   docker-compose up -d
+   ```
 
-1. Open your browser and navigate to `http://localhost:8000`.
+3. Open your browser and navigate to `http://localhost:8000`.
 
 *(Note: For the PWA and Media Session API to work properly on mobile devices, PubVox must be served over HTTPS. We recommend putting it behind a reverse proxy like Caddy, Nginx Proxy Manager, or Traefik).*
 
@@ -56,22 +56,22 @@ If you want to run PubVox locally without Docker or contribute to the project:
 
 1. Clone the repository:
 
-```shell
-git clone https://github.com/samxli/PubVox.git
-cd PubVox
-```
+   ```shell
+   git clone https://github.com/samxli/PubVox.git
+   cd PubVox
+   ```
 
-1. Install dependencies:
+2. Install dependencies:
 
-```shell
-pip install -r requirements.txt
-```
+   ```shell
+   pip install -r requirements.txt
+   ```
 
-1. Run the development server:
+3. Run the development server:
 
-```shell
-python main.py
-```
+   ```shell
+   python main.py
+   ```
 
 ## 🗺️ Roadmap
 
@@ -85,3 +85,5 @@ python main.py
 ## 📄 License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+[edge-tts]: https://github.com/rany2/edge-tts
