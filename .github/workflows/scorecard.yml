@@ -28,6 +28,55 @@ jobs:
           results_format: sarif
           publish_results: true
 
+      - name: Write Scorecard summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## OpenSSF Scorecard"
+            echo
+            echo "- Repository: \`${GITHUB_REPOSITORY}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Published results: https://scorecard.dev/viewer/?uri=github.com/${GITHUB_REPOSITORY}"
+            echo "- Code scanning alerts: https://github.com/${GITHUB_REPOSITORY}/security/code-scanning"
+            echo
+
+            if [ -f results.json ]; then
+              score="$(jq -r '.score // "unknown"' results.json)"
+              scan_date="$(jq -r '.date // "unknown"' results.json)"
+              echo "- Score: \`${score}\`"
+              echo "- Scan date: \`${scan_date}\`"
+              echo
+              echo "### Checks"
+              echo
+              echo "| Check | Score | Reason |"
+              echo "| --- | --- | --- |"
+              jq -r '
+                def esc: tostring | gsub("\\|"; "\\|") | gsub("\n"; "<br>");
+                .checks[]
+                | "| \(.name | esc) | \(.score | esc) | \(.reason | esc) |"
+              ' results.json
+            elif [ -f scorecard.sarif ]; then
+              echo "Scorecard SARIF was generated, but the JSON summary was unavailable."
+              echo
+              echo "### Findings"
+              echo
+              echo "| Check | Summary |"
+              echo "| --- | --- |"
+              jq -r '
+                def esc: tostring | gsub("\\|"; "\\|") | gsub("\n"; "<br>");
+                .runs[0] as $run
+                | ($run.tool.driver.rules // []) as $rules
+                | ($run.results // [])[]
+                | .ruleId as $id
+                | ($rules[]? | select(.id == $id) | .name) as $name
+                | "| \(($name // $id) | esc) | \(.message.text | esc) |"
+              ' scorecard.sarif
+            else
+              echo "No Scorecard result file was produced."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload Scorecard SARIF
         uses: github/codeql-action/upload-sarif@e46ed2cbd01164d986452f91f178727624ae40d7 # v4
         with:
