@@ -1,0 +1,90 @@
+name: CodeQL
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "32 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  detect-languages:
+    name: Detect CodeQL Languages
+    runs-on: ubuntu-latest
+    outputs:
+      languages: ${{ steps.detect.outputs.languages }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Detect supported source files
+        id: detect
+        shell: bash
+        run: |
+          languages=()
+          files="$(git ls-files)"
+
+          if echo "$files" | grep -Eq '\.(js|jsx|mjs|cjs|ts|tsx)$'; then
+            languages+=("javascript-typescript")
+          fi
+
+          if echo "$files" | grep -Eq '\.py$'; then
+            languages+=("python")
+          fi
+
+          if echo "$files" | grep -Eq '\.go$'; then
+            languages+=("go")
+          fi
+
+          if echo "$files" | grep -Eq '\.(java|kt|kts)$'; then
+            languages+=("java-kotlin")
+          fi
+
+          if echo "$files" | grep -Eq '\.(cs|csproj|sln)$'; then
+            languages+=("csharp")
+          fi
+
+          if echo "$files" | grep -Eq '\.rb$'; then
+            languages+=("ruby")
+          fi
+
+          if echo "$files" | grep -Eq '\.(c|cc|cpp|cxx|h|hpp|hxx)$'; then
+            languages+=("c-cpp")
+          fi
+
+          if ((${#languages[@]} == 0)); then
+            echo "languages=" >> "$GITHUB_OUTPUT"
+          else
+            IFS=,
+            echo "languages=${languages[*]}" >> "$GITHUB_OUTPUT"
+          fi
+
+  analyze:
+    name: Analyze
+    needs: detect-languages
+    if: needs.detect-languages.outputs.languages != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@e46ed2cbd01164d986452f91f178727624ae40d7 # v4
+        with:
+          languages: ${{ needs.detect-languages.outputs.languages }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@e46ed2cbd01164d986452f91f178727624ae40d7 # v4
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@e46ed2cbd01164d986452f91f178727624ae40d7 # v4
+
