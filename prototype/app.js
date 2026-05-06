@@ -143,8 +143,8 @@ function renderChapters(book) {
 
 function selectBook(id) {
   state.activeBookId = id;
-  state.elapsedPercent = books.find((book) => book.id === id)?.progress || 0;
   localStorage.setItem("pubvox.activeBookId", id);
+  setElapsedPercent(activeBook().progress || 0);
   render();
 }
 
@@ -154,8 +154,7 @@ function setPlaying(isPlaying) {
 
   if (state.isPlaying) {
     state.playbackTimer = setInterval(() => {
-      state.elapsedPercent = Math.min(100, state.elapsedPercent + 0.4);
-      localStorage.setItem("pubvox.elapsedPercent", String(state.elapsedPercent));
+      setElapsedPercent(state.elapsedPercent + 0.4);
 
       if (state.elapsedPercent >= 100) {
         setPlaying(false);
@@ -171,9 +170,14 @@ function setPlaying(isPlaying) {
 function skip(seconds) {
   const durationSeconds = durationToSeconds(currentChapter().duration);
   const percentDelta = (seconds / durationSeconds) * 100;
-  state.elapsedPercent = Math.max(0, Math.min(100, state.elapsedPercent + percentDelta));
-  localStorage.setItem("pubvox.elapsedPercent", String(state.elapsedPercent));
+  setElapsedPercent(state.elapsedPercent + percentDelta);
   render();
+}
+
+function setElapsedPercent(percent) {
+  state.elapsedPercent = Math.max(0, Math.min(100, percent));
+  activeBook().progress = Math.round(state.elapsedPercent);
+  localStorage.setItem("pubvox.elapsedPercent", String(state.elapsedPercent));
 }
 
 function timeFromPercent(percent, duration) {
@@ -241,12 +245,12 @@ document.querySelector("#sort-toggle").addEventListener("click", () => {
   render();
 });
 dom.timeline.addEventListener("input", (event) => {
-  state.elapsedPercent = Number(event.target.value);
-  localStorage.setItem("pubvox.elapsedPercent", String(state.elapsedPercent));
+  setElapsedPercent(Number(event.target.value));
   render();
 });
 dom.uploadInput.addEventListener("change", (event) => {
   simulateUpload(event.target.files[0]?.name);
 });
 
+setElapsedPercent(state.elapsedPercent);
 render();
