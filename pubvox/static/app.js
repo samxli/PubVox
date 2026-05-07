@@ -42,17 +42,28 @@ async function api(path, options = {}) {
   const response = await fetch(path, options);
 
   if (!response.ok) {
-    let message = `Request failed with ${response.status}`;
-    try {
-      const error = await response.json();
-      message = error.detail || message;
-    } catch {
-      // Keep the status-based message when the response is not JSON.
-    }
-    throw new Error(message);
+    throw new Error(await responseErrorMessage(response));
   }
 
   return response.json();
+}
+
+async function responseErrorMessage(response) {
+  let message = `Request failed with ${response.status}`;
+
+  try {
+    const error = await response.clone().json();
+    return error.detail || message;
+  } catch {
+    // Try plain text next; otherwise keep the status-based message.
+  }
+
+  try {
+    const text = await response.text();
+    return text || message;
+  } catch {
+    return message;
+  }
 }
 
 /** Refresh the library, restore the active book, and configure playback. */
@@ -204,27 +215,32 @@ function emptyState(message) {
   return element;
 }
 
-function selectBook(id) {
+async function selectBook(id) {
+  await setPlaying(false);
   state.activeBookId = id;
   localStorage.setItem("pubvox.activeBookId", id);
   state.elapsedSeconds = activeBook()?.resume?.elapsed_seconds || 0;
-  setPlaying(false);
   render();
   configureAudio();
 }
 
-function selectChapter(position) {
+async function selectChapter(position) {
   const book = activeBook();
   if (!book) {
     return;
   }
 
+  const shouldResume = state.isPlaying;
+  await setPlaying(false);
   book.currentChapter = position;
   state.elapsedSeconds = 0;
-  setPlaying(false);
   render();
   configureAudio();
-  syncProgress();
+  await syncProgress();
+
+  if (shouldResume) {
+    await setPlaying(true);
+  }
 }
 
 function configureAudio() {
@@ -244,18 +260,27 @@ function configureAudio() {
 async function setPlaying(isPlaying) {
   const chapter = currentChapter();
   if (isPlaying && !chapter?.audioUrl) {
+    state.isPlaying = false;
+    render();
     return;
   }
 
   if (isPlaying) {
+    state.isPlaying = true;
+    render();
+
     try {
       seekAudioToState();
       await dom.audio.play();
     } catch (error) {
+      state.isPlaying = false;
+      render();
       showProcessing("Playback", 100, error.message);
     }
   } else {
     dom.audio.pause();
+    state.isPlaying = false;
+    render();
   }
 }
 
@@ -313,13 +338,23 @@ function seekAudioToState() {
   }
 
   const target = Math.max(0, Math.min(dom.audio.duration, state.elapsedSeconds));
+  const stateChanged = Math.abs(state.elapsedSeconds - target) >= 0.5;
+  state.elapsedSeconds = target;
+
   if (Math.abs(dom.audio.currentTime - target) < 0.5) {
+    if (stateChanged) {
+      render();
+    }
     return;
   }
 
   state.isSeekingFromState = true;
   dom.audio.currentTime = target;
   state.isSeekingFromState = false;
+
+  if (stateChanged) {
+    render();
+  }
 }
 
 function progressPercent(book, chapter, elapsedSeconds) {
@@ -397,7 +432,13 @@ function syncProgressBeforeUnload() {
     headers: { "Content-Type": "application/json" },
     body,
     keepalive: true,
-  }).catch((error) => console.warn("Unable to sync progress before unload", error));
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        console.warn("Unable to sync progress before unload", await responseErrorMessage(response));
+      }
+    })
+    .catch((error) => console.warn("Unable to sync progress before unload", error));
 }
 
 /** Upload an ePub and insert the returned book into the local library view. */
