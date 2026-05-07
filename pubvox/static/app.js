@@ -11,6 +11,7 @@ const state = {
   isPlaying: false,
   isSeekingFromState: false,
   chapterSelectionSeq: 0,
+  playbackRequestSeq: 0,
   pollTimer: null,
   syncTimer: null,
 };
@@ -261,6 +262,7 @@ function configureAudio() {
 }
 
 async function setPlaying(isPlaying) {
+  const sequence = ++state.playbackRequestSeq;
   const chapter = currentChapter();
   if (isPlaying && !chapter?.audioUrl) {
     state.isPlaying = false;
@@ -273,9 +275,18 @@ async function setPlaying(isPlaying) {
     render();
 
     try {
+      await waitForAudioMetadata();
+      if (sequence !== state.playbackRequestSeq || !state.isPlaying) {
+        return;
+      }
+
       seekAudioToState();
       await dom.audio.play();
     } catch (error) {
+      if (sequence !== state.playbackRequestSeq) {
+        return;
+      }
+
       state.isPlaying = false;
       render();
       showProcessing("Playback", 100, error.message);
@@ -285,6 +296,36 @@ async function setPlaying(isPlaying) {
     state.isPlaying = false;
     render();
   }
+}
+
+function hasAudioMetadata() {
+  return dom.audio.readyState >= 1 && Number.isFinite(dom.audio.duration);
+}
+
+function waitForAudioMetadata() {
+  if (hasAudioMetadata()) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      dom.audio.removeEventListener("loadedmetadata", handleReady);
+      dom.audio.removeEventListener("canplay", handleReady);
+      dom.audio.removeEventListener("error", handleError);
+    };
+    const handleReady = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error("Audio metadata failed to load."));
+    };
+
+    dom.audio.addEventListener("loadedmetadata", handleReady, { once: true });
+    dom.audio.addEventListener("canplay", handleReady, { once: true });
+    dom.audio.addEventListener("error", handleError, { once: true });
+  });
 }
 
 function skip(seconds) {
@@ -336,7 +377,7 @@ function playbackDuration(chapter = currentChapter()) {
 
 function seekAudioToState() {
   const chapter = currentChapter();
-  if (!chapter?.audioUrl || dom.audio.readyState < 1 || !Number.isFinite(dom.audio.duration)) {
+  if (!chapter?.audioUrl || !hasAudioMetadata()) {
     return;
   }
 
