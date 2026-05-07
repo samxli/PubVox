@@ -236,7 +236,8 @@ async function selectChapter(position) {
   state.elapsedSeconds = 0;
   render();
   configureAudio();
-  await syncProgress();
+  // Progress persistence is best-effort and should not block local playback.
+  syncProgress();
 
   if (shouldResume) {
     await setPlaying(true);
