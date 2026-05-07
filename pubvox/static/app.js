@@ -10,6 +10,7 @@ const state = {
   elapsedSeconds: 0,
   isPlaying: false,
   isSeekingFromState: false,
+  chapterSelectionSeq: 0,
   pollTimer: null,
   syncTimer: null,
 };
@@ -225,6 +226,7 @@ async function selectBook(id) {
 }
 
 async function selectChapter(position) {
+  const sequence = ++state.chapterSelectionSeq;
   const book = activeBook();
   if (!book) {
     return;
@@ -239,7 +241,7 @@ async function selectChapter(position) {
   // Progress persistence is best-effort and should not block local playback.
   syncProgress();
 
-  if (shouldResume) {
+  if (shouldResume && sequence === state.chapterSelectionSeq && book.currentChapter === position) {
     await setPlaying(true);
   }
 }
