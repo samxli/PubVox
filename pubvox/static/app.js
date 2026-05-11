@@ -19,6 +19,12 @@ const state = {
 
 const RESUME_CACHE_KEY = "pubvox.resumeCache";
 
+// Parsed cache payload held in memory while `state.books` is still loading.
+// Set by `restoreResumeCache()` on bootstrap, consulted by `render()` and
+// `setPlaying()` to keep the cached UI alive, cleared by `loadBooks()` once
+// the real library data takes over.
+let cachedSnapshot = null;
+
 const dom = {
   audio: document.querySelector("#audio"),
   bookList: document.querySelector("#book-list"),
@@ -73,17 +79,30 @@ async function responseErrorMessage(response) {
 
 /** Refresh the library, restore the active book, and configure playback. */
 async function loadBooks() {
+  const elapsedAtFetchStart = state.elapsedSeconds;
   state.books = await api("/api/books");
+  // Live data takes over from the optimistic cache snapshot now that we have
+  // real books to render against; subsequent calls hit the normal code paths.
+  cachedSnapshot = null;
 
   if (!state.books.some((book) => book.id === state.activeBookId)) {
     state.activeBookId = state.books[0]?.id || null;
   }
 
   const book = activeBook();
-  // Apply the server's resume value on the first call (it's authoritative and
-  // overrides any cache-prefilled position) or whenever local state was reset
-  // since (e.g. after upload). Later polling refreshes leave live playback alone.
-  if (book?.resume && (!state.initialLoadComplete || state.elapsedSeconds === 0)) {
+  // The server's resume is authoritative for cross-device sync, but if the
+  // user moved the elapsed position during the fetch (e.g. tapped play in the
+  // cache window and the audio advanced via `timeupdate`), their action wins.
+  // 0.5s of tolerance absorbs float jitter from seek-induced timeupdates.
+  const userMovedElapsed = Math.abs(state.elapsedSeconds - elapsedAtFetchStart) > 0.5;
+  // Apply the server's resume value on the first call (it overrides any
+  // cache-prefilled position) or whenever local state was reset since (e.g.
+  // after upload). Later polling refreshes leave live playback alone.
+  if (
+    book?.resume
+    && !userMovedElapsed
+    && (!state.initialLoadComplete || state.elapsedSeconds === 0)
+  ) {
     book.currentChapter = book.resume.chapter_index ?? book.currentChapter;
     state.elapsedSeconds = Number(book.resume.elapsed_seconds || 0);
   }
@@ -112,6 +131,13 @@ function render() {
   const chapter = currentChapter(book);
 
   if (!book || !chapter) {
+    // During the cache window (books still loading) the player chrome was
+    // already painted by `restoreResumeCache()`. Refresh only the dynamic
+    // bits so play/timeupdate handlers don't wipe the cached labels.
+    if (state.books.length === 0 && cachedSnapshot) {
+      paintCachedPlayer();
+      return;
+    }
     renderEmpty();
     return;
   }
@@ -190,6 +216,7 @@ function restoreResumeCache() {
     return;
   }
 
+  cachedSnapshot = cached;
   state.elapsedSeconds = Number(cached.elapsedSeconds) || 0;
 
   const chapterPosition = Number(cached.chapterPosition) || 0;
@@ -215,6 +242,11 @@ function restoreResumeCache() {
     return;
   }
 
+  // Enable the play button so the user can resume immediately; index.html
+  // ships it disabled and the cache-restore path never runs `render()`'s
+  // full body which would otherwise toggle it for us.
+  dom.playToggle.disabled = false;
+
   // Start preloading the audio now so playback can begin the moment the user
   // taps play, instead of waiting for loadBooks() + a fresh load() cycle.
   dom.audio.dataset.source = cached.audioUrl;
@@ -235,6 +267,46 @@ function restoreResumeCache() {
   } else {
     dom.audio.addEventListener("loadedmetadata", seekToCached, { once: true });
   }
+}
+
+/**
+ * Refresh just the dynamic portions of the player chrome from `state` +
+ * `cachedSnapshot`. Used while books are still loading so render() can react
+ * to play/pause/timeupdate without falling through to `renderEmpty()`.
+ */
+function paintCachedPlayer() {
+  if (!cachedSnapshot) {
+    return;
+  }
+  const fallbackDuration = Number(cachedSnapshot.chapterDurationSeconds) || 0;
+  const duration = Number.isFinite(dom.audio.duration) && dom.audio.duration > 0
+    ? dom.audio.duration
+    : fallbackDuration;
+  const max = Math.max(1, Math.floor(duration));
+
+  dom.duration.textContent = formatTime(duration);
+  dom.elapsed.textContent = formatTime(state.elapsedSeconds);
+  dom.timeline.max = max;
+  dom.timeline.value = Math.min(max, Math.floor(state.elapsedSeconds));
+  dom.playToggle.disabled = !cachedSnapshot.audioUrl;
+  dom.playToggle.classList.toggle("is-playing", state.isPlaying);
+  dom.playToggle.setAttribute("aria-label", state.isPlaying ? "Pause" : "Play");
+}
+
+/**
+ * Resolves the current playback target, falling back to the cached snapshot
+ * during the bootstrap window when `state.books` is still empty. Returns
+ * `null` only when there is genuinely nothing to play.
+ */
+function activePlaybackTarget() {
+  const chapter = currentChapter();
+  if (chapter?.audioUrl) {
+    return chapter.audioUrl;
+  }
+  if (state.books.length === 0 && cachedSnapshot?.audioUrl) {
+    return cachedSnapshot.audioUrl;
+  }
+  return null;
 }
 
 function renderEmpty() {
@@ -365,8 +437,10 @@ function configureAudio() {
 
 async function setPlaying(isPlaying) {
   const sequence = ++state.playbackRequestSeq;
-  const chapter = currentChapter();
-  if (isPlaying && !chapter?.audioUrl) {
+  // Fall back to the cached snapshot's audio URL during the bootstrap window
+  // so a user tap on the now-enabled play button isn't dropped just because
+  // `currentChapter()` is still null pending `loadBooks()`.
+  if (isPlaying && !activePlaybackTarget()) {
     state.isPlaying = false;
     render();
     return;
@@ -431,11 +505,18 @@ function waitForAudioMetadata() {
 }
 
 function skip(seconds) {
-  const duration = playbackDuration();
+  const chapter = currentChapter();
+  // Skip needs a known chapter duration to clamp against; during the bootstrap
+  // window we don't have one yet (cached durationSeconds is just an estimate),
+  // so ignore presses rather than risk truncating the cached elapsed to 0.
+  if (!chapter) {
+    return;
+  }
+  const duration = playbackDuration(chapter);
   const nextTime = Math.max(0, Math.min(duration, state.elapsedSeconds + seconds));
   state.elapsedSeconds = nextTime;
 
-  if (currentChapter()?.audioUrl) {
+  if (chapter.audioUrl) {
     dom.audio.currentTime = nextTime;
   }
 
@@ -679,8 +760,14 @@ document.querySelector("#skip-back").addEventListener("click", () => skip(-15));
 document.querySelector("#skip-forward").addEventListener("click", () => skip(30));
 document.querySelector("#refresh-books").addEventListener("click", loadBooks);
 dom.timeline.addEventListener("input", (event) => {
+  const chapter = currentChapter();
+  // See `skip()`: ignore drags until the real chapter is available so we don't
+  // clobber the cached UI with `renderEmpty()`.
+  if (!chapter) {
+    return;
+  }
   state.elapsedSeconds = Number(event.target.value);
-  if (currentChapter()?.audioUrl) {
+  if (chapter.audioUrl) {
     dom.audio.currentTime = state.elapsedSeconds;
   }
   render();
@@ -710,9 +797,10 @@ dom.audio.addEventListener("timeupdate", () => {
   if (state.isSeekingFromState) {
     return;
   }
-  // While the cache is on screen (state.books still loading), `render()` would
-  // fall through to `renderEmpty()` and clobber the prefilled elapsed display.
-  if (!state.books.length) {
+  // Suppress pre-seek timeupdates fired during the cache-window audio load
+  // (currentTime starts at 0 before the cached seek lands). Once the user
+  // taps play, isPlaying flips true and `timeupdate` drives the UI normally.
+  if (!state.books.length && !state.isPlaying) {
     return;
   }
 
@@ -720,11 +808,9 @@ dom.audio.addEventListener("timeupdate", () => {
   render();
 });
 dom.audio.addEventListener("loadedmetadata", () => {
-  // Same protection as `timeupdate` above; the cache-restore path attaches its
-  // own one-shot seeker, so we don't need to seek again here.
-  if (!state.books.length) {
-    return;
-  }
+  // The cache-restore path attaches a one-shot seeker for the bootstrap
+  // window; here we just sync the audio element to the live `state` and
+  // repaint. `render()` handles the cache-window case via `paintCachedPlayer()`.
   seekAudioToState();
   render();
 });
