@@ -107,9 +107,13 @@ async function loadBooks() {
     const matched = book.chapters.find((chap) => chap.audioUrl === playingSource);
     if (matched) {
       book.currentChapter = matched.position;
-      // The audio element is the source of truth while playing; keep state
-      // aligned with the position it actually advanced to during the fetch.
-      if (Number.isFinite(dom.audio.currentTime)) {
+      // The audio element is the source of truth only once metadata has loaded
+      // and currentTime has actually advanced past 0. Before that, the cached
+      // one-shot seeker (queued in `restoreResumeCache()`) hasn't run yet and
+      // currentTime is still 0 — copying it would clobber `state.elapsedSeconds`
+      // (e.g. 145) down to 0, and the subsequent seekAudioToState() would then
+      // park the audio at 0, defeating the cache restore.
+      if (hasAudioMetadata() && dom.audio.currentTime > 0.5) {
         state.elapsedSeconds = dom.audio.currentTime;
       }
       playbackReconciled = true;
