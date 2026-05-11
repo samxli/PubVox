@@ -8,6 +8,7 @@ persistence, parsing, and TTS work to the package modules.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 import shutil
 import uuid
@@ -18,11 +19,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from pubvox import database, tts
-from pubvox.config import STATIC_DIR, UPLOAD_DIR
+from pubvox.config import AUDIO_DIR, STATIC_DIR, UPLOAD_DIR
 from pubvox.epub_parser import parse_epub
 
 
 STATIC_ROOT = STATIC_DIR.resolve()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -97,6 +99,17 @@ def book(book_id: str) -> dict:
     return found
 
 
+@app.delete("/api/books/{book_id}")
+def delete_book(book_id: str) -> dict[str, bool]:
+    """Remove a book from the library and delete its stored artifacts."""
+    deleted = database.delete_book(book_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Book not found.")
+
+    remove_book_files(book_id)
+    return {"deleted": True}
+
+
 @app.post("/api/books/{book_id}/progress")
 def save_progress(book_id: str, progress: ProgressUpdate) -> dict:
     """Persist listening progress so reloads and other devices can resume."""
@@ -123,6 +136,25 @@ def chapter_audio(book_id: str, position: int) -> FileResponse:
         raise HTTPException(status_code=404, detail="Audio file is missing.")
 
     return FileResponse(audio_path, media_type="audio/mpeg", filename=audio_path.name)
+
+
+def remove_book_files(book_id: str) -> None:
+    """Clean up uploaded ePub and generated chapter audio for a deleted book."""
+    upload_path = UPLOAD_DIR / f"{book_id}.epub"
+    audio_dir = AUDIO_DIR / book_id
+
+    try:
+        upload_path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Unable to delete uploaded ePub for book %s", book_id, exc_info=True)
+        raise
+
+    if audio_dir.exists():
+        try:
+            shutil.rmtree(audio_dir)
+        except OSError:
+            logger.warning("Unable to delete audio directory for book %s", book_id, exc_info=True)
+            raise
 
 
 @app.get("/")

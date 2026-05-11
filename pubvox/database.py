@@ -174,6 +174,29 @@ def get_book(book_id: str) -> dict[str, Any] | None:
         return _book_payload(connection, row) if row else None
 
 
+def book_exists(book_id: str) -> bool:
+    """Return whether a book still exists for the local user."""
+    with connect() as connection:
+        return _book_row(connection, book_id) is not None
+
+
+def delete_book(book_id: str) -> bool:
+    """Delete a book and cascade its chapters and progress records."""
+    with connect() as connection:
+        row = _book_row(connection, book_id)
+        if not row:
+            return False
+
+        connection.execute(
+            """
+            DELETE FROM books
+            WHERE id = ? AND user_id = ?
+            """,
+            (book_id, DEFAULT_USER_ID),
+        )
+        return True
+
+
 def get_chapter(book_id: str, position: int) -> dict[str, Any] | None:
     """Return a raw chapter row by book and zero-based chapter position."""
     with connect() as connection:

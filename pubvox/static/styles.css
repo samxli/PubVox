@@ -206,9 +206,8 @@ p {
 }
 
 .book-card {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) auto;
-  gap: 14px;
+  display: flex;
+  gap: 10px;
   align-items: center;
   width: 100%;
   padding: 14px;
@@ -216,13 +215,44 @@ p {
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.05);
   color: inherit;
-  text-align: left;
 }
 
 .book-card:hover,
 .book-card.active {
   border-color: rgba(126, 230, 168, 0.55);
   background: rgba(126, 230, 168, 0.08);
+}
+
+.book-select {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  appearance: none;
+}
+
+.delete-book-button {
+  flex: none;
+  border: 1px solid rgba(255, 143, 143, 0.24);
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: rgba(255, 143, 143, 0.1);
+  color: var(--danger);
+  font-size: 0.72rem;
+  font-weight: 800;
+  appearance: none;
+}
+
+.delete-book-button:hover {
+  background: rgba(255, 143, 143, 0.18);
 }
 
 .book-cover,

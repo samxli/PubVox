@@ -151,10 +151,13 @@ function renderEmpty() {
 
 function renderBooks(active) {
   const cards = state.books.map((book) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `book-card${book.id === active.id ? " active" : ""}`;
-    button.addEventListener("click", () => selectBook(book.id));
+    const card = document.createElement("div");
+    card.className = `book-card${book.id === active.id ? " active" : ""}`;
+
+    const selectButton = document.createElement("button");
+    selectButton.type = "button";
+    selectButton.className = "book-select";
+    selectButton.addEventListener("click", () => selectBook(book.id));
 
     const cover = document.createElement("span");
     cover.className = "book-cover";
@@ -178,8 +181,16 @@ function renderBooks(active) {
     progress.textContent = `${book.progress || 0}% done`;
     status.append(pill, progress);
 
-    button.append(cover, details, status);
-    return button;
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "delete-book-button";
+    deleteButton.setAttribute("aria-label", `Delete ${book.title}`);
+    deleteButton.textContent = "Delete";
+    deleteButton.addEventListener("click", () => deleteBook(book));
+
+    selectButton.append(cover, details, status);
+    card.append(selectButton, deleteButton);
+    return card;
   });
 
   dom.bookList.replaceChildren(...cards);
@@ -224,6 +235,38 @@ async function selectBook(id) {
   state.elapsedSeconds = activeBook()?.resume?.elapsed_seconds || 0;
   render();
   configureAudio();
+}
+
+async function deleteBook(book) {
+  const confirmed = window.confirm(
+    `Delete "${book.title}" from your library? This also removes its uploaded ePub and generated audio.`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const wasActive = book.id === state.activeBookId;
+  if (wasActive) {
+    await setPlaying(false);
+  }
+
+  try {
+    await api(`/api/books/${book.id}`, { method: "DELETE" });
+    state.books = state.books.filter((item) => item.id !== book.id);
+
+    if (wasActive) {
+      state.activeBookId = state.books[0]?.id || null;
+      state.elapsedSeconds = 0;
+      localStorage.setItem("pubvox.activeBookId", state.activeBookId || "");
+    }
+
+    showProcessing(book.title, 100, "Book deleted.");
+    render();
+    configureAudio();
+    updatePolling();
+  } catch (error) {
+    showProcessing(book.title, 100, error.message);
+  }
 }
 
 async function selectChapter(position) {
