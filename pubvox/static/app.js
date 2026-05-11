@@ -14,7 +14,10 @@ const state = {
   playbackRequestSeq: 0,
   pollTimer: null,
   syncTimer: null,
+  initialLoadComplete: false,
 };
+
+const RESUME_CACHE_KEY = "pubvox.resumeCache";
 
 const dom = {
   audio: document.querySelector("#audio"),
@@ -77,10 +80,14 @@ async function loadBooks() {
   }
 
   const book = activeBook();
-  if (book?.resume && state.elapsedSeconds === 0) {
+  // Apply the server's resume value on the first call (it's authoritative and
+  // overrides any cache-prefilled position) or whenever local state was reset
+  // since (e.g. after upload). Later polling refreshes leave live playback alone.
+  if (book?.resume && (!state.initialLoadComplete || state.elapsedSeconds === 0)) {
     book.currentChapter = book.resume.chapter_index ?? book.currentChapter;
     state.elapsedSeconds = Number(book.resume.elapsed_seconds || 0);
   }
+  state.initialLoadComplete = true;
 
   localStorage.setItem("pubvox.activeBookId", state.activeBookId || "");
   render();
@@ -133,6 +140,101 @@ function render() {
   renderBooks(book);
   renderChapters(book);
   updateMediaSession(book, chapter);
+  saveResumeCache(book, chapter);
+}
+
+/**
+ * Persist enough of the active book/chapter to paint the player instantly on
+ * the next page load, before the `/api/books` round trip resolves.
+ */
+function saveResumeCache(book, chapter) {
+  try {
+    localStorage.setItem(
+      RESUME_CACHE_KEY,
+      JSON.stringify({
+        bookId: book.id,
+        bookTitle: book.title,
+        bookAuthor: book.author,
+        bookProgress: book.progress || 0,
+        chapterPosition: chapter.position,
+        chapterTitle: chapter.title,
+        chapterStatus: chapter.status,
+        chapterDurationSeconds: chapter.durationSeconds || 0,
+        elapsedSeconds: state.elapsedSeconds,
+        audioUrl: chapter.audioUrl || "",
+      }),
+    );
+  } catch {
+    // localStorage may be full or disabled (private mode); the cache is
+    // strictly a perf optimization, so swallow the error.
+  }
+}
+
+/**
+ * Paint the player from the last-known snapshot before `loadBooks()` resolves
+ * so refreshes don't flash 0:00 for the duration of the network request. The
+ * server's resume value still overrides this once the real data arrives.
+ */
+function restoreResumeCache() {
+  let cached;
+  try {
+    const raw = localStorage.getItem(RESUME_CACHE_KEY);
+    if (!raw) {
+      return;
+    }
+    cached = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  if (!cached?.bookId || cached.bookId !== state.activeBookId) {
+    return;
+  }
+
+  state.elapsedSeconds = Number(cached.elapsedSeconds) || 0;
+
+  const chapterPosition = Number(cached.chapterPosition) || 0;
+  const chapterLabel = `Chapter ${chapterPosition + 1} - ${cached.chapterTitle || ""}`;
+  const duration = Number(cached.chapterDurationSeconds) || 0;
+  const progress = Math.max(0, Math.min(100, cached.bookProgress || 0));
+
+  dom.nowTitle.textContent = cached.bookTitle || "";
+  dom.nowMeta.textContent = `${chapterLabel} (${statusLabel(cached.chapterStatus)})`;
+  dom.bookProgress.textContent = `${progress}%`;
+  dom.progressRing.style.background = `
+    radial-gradient(circle at center, var(--panel-strong) 0 58%, transparent 59%),
+    conic-gradient(var(--accent) 0 ${progress}%, rgba(255, 255, 255, 0.14) ${progress}% 100%)
+  `;
+  dom.playerTitle.textContent = cached.bookTitle || "";
+  dom.playerChapter.textContent = chapterLabel;
+  dom.duration.textContent = formatTime(duration);
+  dom.elapsed.textContent = formatTime(state.elapsedSeconds);
+  dom.timeline.max = Math.max(1, Math.floor(duration));
+  dom.timeline.value = Math.min(Number(dom.timeline.max), Math.floor(state.elapsedSeconds));
+
+  if (!cached.audioUrl) {
+    return;
+  }
+
+  // Start preloading the audio now so playback can begin the moment the user
+  // taps play, instead of waiting for loadBooks() + a fresh load() cycle.
+  dom.audio.dataset.source = cached.audioUrl;
+  dom.audio.src = cached.audioUrl;
+  dom.audio.load();
+
+  const seekToCached = () => {
+    const target = Math.max(0, Math.min(dom.audio.duration, state.elapsedSeconds));
+    if (Number.isFinite(target) && Math.abs(dom.audio.currentTime - target) >= 0.5) {
+      state.isSeekingFromState = true;
+      dom.audio.currentTime = target;
+      state.isSeekingFromState = false;
+    }
+  };
+
+  if (hasAudioMetadata()) {
+    seekToCached();
+  } else {
+    dom.audio.addEventListener("loadedmetadata", seekToCached, { once: true });
+  }
 }
 
 function renderEmpty() {
@@ -608,11 +710,21 @@ dom.audio.addEventListener("timeupdate", () => {
   if (state.isSeekingFromState) {
     return;
   }
+  // While the cache is on screen (state.books still loading), `render()` would
+  // fall through to `renderEmpty()` and clobber the prefilled elapsed display.
+  if (!state.books.length) {
+    return;
+  }
 
   state.elapsedSeconds = dom.audio.currentTime;
   render();
 });
 dom.audio.addEventListener("loadedmetadata", () => {
+  // Same protection as `timeupdate` above; the cache-restore path attaches its
+  // own one-shot seeker, so we don't need to seek again here.
+  if (!state.books.length) {
+    return;
+  }
   seekAudioToState();
   render();
 });
@@ -625,6 +737,7 @@ document.addEventListener("visibilitychange", () => {
 });
 state.syncTimer = setInterval(syncProgress, 5000);
 
+restoreResumeCache();
 loadBooks().catch((error) => {
   dom.bookList.replaceChildren(emptyState(error.message));
 });
