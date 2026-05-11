@@ -81,6 +81,15 @@ async function responseErrorMessage(response) {
 async function loadBooks() {
   const elapsedAtFetchStart = state.elapsedSeconds;
   state.books = await api("/api/books");
+
+  // If the user tapped play during the cache window, the audio element is
+  // already committed to whatever source `restoreResumeCache()` preloaded.
+  // Capture it so we can align the server book to that source below; without
+  // this, configureAudio() would switch to the server's `currentChapter` and
+  // interrupt the playback the user just started (e.g. a chapter-change
+  // syncProgress that hadn't reached the server yet would lose).
+  const playingSource = state.isPlaying ? dom.audio.dataset.source : "";
+
   // Live data takes over from the optimistic cache snapshot now that we have
   // real books to render against; subsequent calls hit the normal code paths.
   cachedSnapshot = null;
@@ -90,16 +99,31 @@ async function loadBooks() {
   }
 
   const book = activeBook();
+
+  // Reconcile the server payload to the actually-playing source so the next
+  // configureAudio() sees a matching `audioUrl` and leaves playback alone.
+  let playbackReconciled = false;
+  if (playingSource && book?.chapters?.length) {
+    const matched = book.chapters.find((chap) => chap.audioUrl === playingSource);
+    if (matched) {
+      book.currentChapter = matched.position;
+      // The audio element is the source of truth while playing; keep state
+      // aligned with the position it actually advanced to during the fetch.
+      if (Number.isFinite(dom.audio.currentTime)) {
+        state.elapsedSeconds = dom.audio.currentTime;
+      }
+      playbackReconciled = true;
+    }
+  }
+
   // The server's resume is authoritative for cross-device sync, but if the
-  // user moved the elapsed position during the fetch (e.g. tapped play in the
-  // cache window and the audio advanced via `timeupdate`), their action wins.
-  // 0.5s of tolerance absorbs float jitter from seek-induced timeupdates.
+  // user moved the elapsed position during the fetch (or kicked off cached
+  // playback we just reconciled to), their action wins. 0.5s of tolerance
+  // absorbs float jitter from seek-induced timeupdates.
   const userMovedElapsed = Math.abs(state.elapsedSeconds - elapsedAtFetchStart) > 0.5;
-  // Apply the server's resume value on the first call (it overrides any
-  // cache-prefilled position) or whenever local state was reset since (e.g.
-  // after upload). Later polling refreshes leave live playback alone.
   if (
     book?.resume
+    && !playbackReconciled
     && !userMovedElapsed
     && (!state.initialLoadComplete || state.elapsedSeconds === 0)
   ) {
