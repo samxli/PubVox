@@ -1,56 +1,15 @@
-# PR-Agent (Qodo Merge) configuration
-# Docs: https://qodo-merge-docs.qodo.ai/usage-guide/configuration_options/
-
-[config]
-model = "openrouter/minimax/minimax-m2.5:free"
-fallback_models = [
-    "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
-    "openrouter/openai/gpt-oss-120b:free",
-]
-custom_model_max_tokens = 120000
-ai_timeout = 300
-response_language = "en-US"
-large_patch_policy = "clip"
-
-[ignore]
-glob = [
-    "data/**",
-    "**/*.mp3",
-    "**/*.wav",
-    "**/*.epub",
-    "**/*.db",
-    "**/*.sqlite",
-    "prototype/**",
-    "**/__pycache__/**",
-    ".venv/**",
-]
-
-[pr_reviewer]
-extra_instructions = """\
-This is a Python (FastAPI/SQLite) backend with a vanilla JS frontend that converts
-EPUB books to audio. Prioritise findings in this order:
-
-1. Security: SQL injection, path traversal, unsafe XML/EPUB parsing,
-   secret handling, missing input validation, unsafe deserialization.
-2. Correctness: error handling, race conditions in async/background work,
-   resource leaks (unclosed files, DB connections, audio handles).
-3. Robustness: missing context managers, bare excepts, silent failures.
-4. Type safety: missing or incorrect type hints in Python.
-5. Concrete code suggestions only \u2014 do not flag whitespace, blank lines,
-   or other purely stylistic issues unless they change behaviour.
-"""
-require_tests_review = true
-require_security_review = true
-num_code_suggestions = 4
-
-[pr_description]
-generate_ai_title = false
-add_original_user_description = true
-keep_original_user_title = true
-
-[pr_code_suggestions]
-num_code_suggestions = 4
-suggestions_score_threshold = 6
-commitable_code_suggestions = false
-demand_code_suggestions_self_review = true
+[review_agent]
+comments_location_policy = "both"
+demand_self_review = true
 approve_pr_on_self_review = true
+
+# severity threshold rank for inline comments:
+# 3=action_required,
+# 2=remediation_recommended,
+# 1=informational.
+# Only findings with rank >= threshold will be published inline
+inline_comments_severity_threshold = 3
+
+# Extra prompt for usecase to be added as instruction for the agent
+issues_user_guidelines = ""
+compliance_user_guidelines = ""
