@@ -24,6 +24,7 @@ const RESUME_CACHE_KEY = "pubvox.resumeCache";
 // `setPlaying()` to keep the cached UI alive, cleared by `loadBooks()` once
 // the real library data takes over.
 let cachedSnapshot = null;
+let bootstrapPlaybackStarted = false;
 
 const dom = {
   audio: document.querySelector("#audio"),
@@ -88,7 +89,7 @@ async function loadBooks() {
   // this, configureAudio() would switch to the server's `currentChapter` and
   // interrupt the playback the user just started (e.g. a chapter-change
   // syncProgress that hadn't reached the server yet would lose).
-  const playingSource = state.isPlaying ? dom.audio.dataset.source : "";
+  const playingSource = (state.isPlaying || bootstrapPlaybackStarted) ? dom.audio.dataset.source : "";
 
   // Live data takes over from the optimistic cache snapshot now that we have
   // real books to render against; subsequent calls hit the normal code paths.
@@ -124,7 +125,7 @@ async function loadBooks() {
   // user moved the elapsed position during the fetch (or kicked off cached
   // playback we just reconciled to), their action wins. 0.5s of tolerance
   // absorbs float jitter from seek-induced timeupdates.
-  const userMovedElapsed = Math.abs(state.elapsedSeconds - elapsedAtFetchStart) > 0.5;
+  const userMovedElapsed = bootstrapPlaybackStarted && Math.abs(state.elapsedSeconds - elapsedAtFetchStart) > 0.5;
   if (
     book?.resume
     && !playbackReconciled
@@ -135,6 +136,7 @@ async function loadBooks() {
     state.elapsedSeconds = Number(book.resume.elapsed_seconds || 0);
   }
   state.initialLoadComplete = true;
+  bootstrapPlaybackStarted = false;
 
   localStorage.setItem("pubvox.activeBookId", state.activeBookId || "");
   render();
@@ -283,10 +285,21 @@ function restoreResumeCache() {
 
   const seekToCached = () => {
     const target = Math.max(0, Math.min(dom.audio.duration, state.elapsedSeconds));
-    if (Number.isFinite(target) && Math.abs(dom.audio.currentTime - target) >= 0.5) {
+    if (!Number.isFinite(target)) {
+      return;
+    }
+
+    const stateChanged = Math.abs(state.elapsedSeconds - target) >= 0.5;
+    state.elapsedSeconds = target;
+
+    if (Math.abs(dom.audio.currentTime - target) >= 0.5) {
       state.isSeekingFromState = true;
       dom.audio.currentTime = target;
       state.isSeekingFromState = false;
+    }
+
+    if (stateChanged) {
+      render();
     }
   };
 
@@ -813,6 +826,9 @@ dom.uploadDropzone.addEventListener("drop", (event) => {
   uploadFile(event.dataTransfer.files[0]);
 });
 dom.audio.addEventListener("play", () => {
+  if (state.books.length === 0 && cachedSnapshot) {
+    bootstrapPlaybackStarted = true;
+  }
   state.isPlaying = true;
   render();
 });
