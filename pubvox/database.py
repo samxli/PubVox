@@ -180,12 +180,14 @@ def book_exists(book_id: str) -> bool:
         return _book_row(connection, book_id) is not None
 
 
-def delete_book(book_id: str) -> bool:
-    """Delete a book and cascade its chapters and progress records."""
+def delete_book(book_id: str) -> str | None:
+    """Delete a book and return its stored ID after cascading related records."""
     with connect() as connection:
         row = _book_row(connection, book_id)
         if not row:
-            return False
+            return None
+
+        deleted_book_id = str(row["id"])
 
         connection.execute(
             """
@@ -194,7 +196,7 @@ def delete_book(book_id: str) -> bool:
             """,
             (book_id, DEFAULT_USER_ID),
         )
-        return True
+        return deleted_book_id
 
 
 def get_chapter(book_id: str, position: int) -> dict[str, Any] | None:
