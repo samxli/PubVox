@@ -957,7 +957,7 @@ dom.timeline.addEventListener("input", (event) => {
   }
   render();
 });
-dom.timeline.addEventListener("change", syncProgress);
+dom.timeline.addEventListener("change", () => syncProgress());
 dom.uploadInput.addEventListener("change", (event) => uploadFile(event.target.files[0]));
 dom.uploadDropzone.addEventListener("dragover", (event) => {
   event.preventDefault();
