@@ -10,11 +10,26 @@ const state = {
   elapsedSeconds: 0,
   isPlaying: false,
   isSeekingFromState: false,
+  isWaitingForStateSeek: false,
   chapterSelectionSeq: 0,
   playbackRequestSeq: 0,
   pollTimer: null,
   syncTimer: null,
+  initialLoadComplete: false,
+  suppressNextPauseSync: false,
 };
+
+const RESUME_CACHE_KEY = "pubvox.resumeCache";
+const RESUME_CACHE_MIN_ELAPSED_DELTA_SECONDS = 1;
+
+// Parsed cache payload held in memory while `state.books` is still loading.
+// Set by `restoreResumeCache()` on bootstrap, consulted by `render()` and
+// `setPlaying()` to keep the cached UI alive, cleared by `loadBooks()` once
+// the real library data takes over.
+let cachedSnapshot = null;
+let bootstrapPlaybackStarted = false;
+let lastResumeCacheSnapshot = null;
+let cachedMetadataSeekHandler = null;
 
 const dom = {
   audio: document.querySelector("#audio"),
@@ -27,6 +42,8 @@ const dom = {
   playerTitle: document.querySelector("#player-title"),
   playerChapter: document.querySelector("#player-chapter"),
   playToggle: document.querySelector("#play-toggle"),
+  skipBack: document.querySelector("#skip-back"),
+  skipForward: document.querySelector("#skip-forward"),
   timeline: document.querySelector("#timeline"),
   elapsed: document.querySelector("#elapsed"),
   duration: document.querySelector("#duration"),
@@ -70,17 +87,64 @@ async function responseErrorMessage(response) {
 
 /** Refresh the library, restore the active book, and configure playback. */
 async function loadBooks() {
+  const elapsedAtFetchStart = state.elapsedSeconds;
   state.books = await api("/api/books");
+
+  // If the user tapped play during the cache window, the audio element is
+  // already committed to whatever source `restoreResumeCache()` preloaded.
+  // Capture it so we can align the server book to that source below; without
+  // this, configureAudio() would switch to the server's `currentChapter` and
+  // interrupt the playback the user just started (e.g. a chapter-change
+  // syncProgress that hadn't reached the server yet would lose).
+  const playingSource = (state.isPlaying || bootstrapPlaybackStarted) ? dom.audio.dataset.source : "";
+
+  // Live data takes over from the optimistic cache snapshot now that we have
+  // real books to render against; subsequent calls hit the normal code paths.
+  clearCachedMetadataSeekHandler();
+  cachedSnapshot = null;
 
   if (!state.books.some((book) => book.id === state.activeBookId)) {
     state.activeBookId = state.books[0]?.id || null;
   }
 
   const book = activeBook();
-  if (book?.resume && state.elapsedSeconds === 0) {
+
+  // Reconcile the server payload to the actually-playing source so the next
+  // configureAudio() sees a matching `audioUrl` and leaves playback alone.
+  let playbackReconciled = false;
+  if (playingSource && book?.chapters?.length) {
+    const matched = book.chapters.find((chap) => chap.audioUrl === playingSource);
+    if (matched) {
+      book.currentChapter = matched.position;
+      // The audio element is the source of truth only once metadata has loaded
+      // and currentTime has actually advanced past 0. Before that, the cached
+      // one-shot seeker (queued in `restoreResumeCache()`) hasn't run yet and
+      // currentTime is still 0 — copying it would clobber `state.elapsedSeconds`
+      // (e.g. 145) down to 0, and the subsequent seekAudioToState() would then
+      // park the audio at 0, defeating the cache restore.
+      if (hasAudioMetadata() && dom.audio.currentTime > 0.5) {
+        state.elapsedSeconds = dom.audio.currentTime;
+      }
+      playbackReconciled = true;
+    }
+  }
+
+  // The server's resume is authoritative for cross-device sync, but if the
+  // user moved the elapsed position during the fetch (or kicked off cached
+  // playback we just reconciled to), their action wins. 0.5s of tolerance
+  // absorbs float jitter from seek-induced timeupdates.
+  const userMovedElapsed = bootstrapPlaybackStarted && Math.abs(state.elapsedSeconds - elapsedAtFetchStart) > 0.5;
+  if (
+    book?.resume
+    && !playbackReconciled
+    && !userMovedElapsed
+    && (!state.initialLoadComplete || state.elapsedSeconds === 0)
+  ) {
     book.currentChapter = book.resume.chapter_index ?? book.currentChapter;
     state.elapsedSeconds = Number(book.resume.elapsed_seconds || 0);
   }
+  state.initialLoadComplete = true;
+  bootstrapPlaybackStarted = false;
 
   localStorage.setItem("pubvox.activeBookId", state.activeBookId || "");
   render();
@@ -105,6 +169,13 @@ function render() {
   const chapter = currentChapter(book);
 
   if (!book || !chapter) {
+    // During the cache window (books still loading) the player chrome was
+    // already painted by `restoreResumeCache()`. Refresh only the dynamic
+    // bits so play/timeupdate handlers don't wipe the cached labels.
+    if (state.books.length === 0 && cachedSnapshot) {
+      paintCachedPlayer();
+      return;
+    }
     renderEmpty();
     return;
   }
@@ -127,12 +198,215 @@ function render() {
   dom.timeline.max = Math.max(1, Math.floor(duration));
   dom.timeline.value = Math.min(Number(dom.timeline.max), Math.floor(state.elapsedSeconds));
   dom.playToggle.disabled = !chapter.audioUrl;
+  setSeekControlsEnabled(Boolean(chapter.audioUrl));
   dom.playToggle.classList.toggle("is-playing", state.isPlaying);
   dom.playToggle.setAttribute("aria-label", state.isPlaying ? "Pause" : "Play");
 
   renderBooks(book);
   renderChapters(book);
   updateMediaSession(book, chapter);
+  saveResumeCache(book, chapter);
+}
+
+/**
+ * Persist enough of the active book/chapter to paint the player instantly on
+ * the next page load, before the `/api/books` round trip resolves.
+ */
+function saveResumeCache(book, chapter) {
+  const snapshot = {
+    bookId: book.id,
+    bookTitle: book.title,
+    bookAuthor: book.author,
+    bookProgress: book.progress || 0,
+    chapterPosition: chapter.position,
+    chapterTitle: chapter.title,
+    chapterStatus: chapter.status,
+    chapterDurationSeconds: chapter.durationSeconds || 0,
+    elapsedSeconds: state.elapsedSeconds,
+    audioUrl: chapter.audioUrl || "",
+  };
+
+  if (!shouldWriteResumeCache(snapshot)) {
+    return;
+  }
+
+  try {
+    localStorage.setItem(RESUME_CACHE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // localStorage may be full or disabled (private mode); the cache is
+    // strictly a perf optimization, so swallow the error.
+  }
+
+  lastResumeCacheSnapshot = snapshot;
+}
+
+function shouldWriteResumeCache(snapshot) {
+  const previous = lastResumeCacheSnapshot;
+  if (!previous) {
+    return true;
+  }
+
+  if (
+    previous.bookId !== snapshot.bookId
+    || previous.bookTitle !== snapshot.bookTitle
+    || previous.bookAuthor !== snapshot.bookAuthor
+    || previous.bookProgress !== snapshot.bookProgress
+    || previous.chapterPosition !== snapshot.chapterPosition
+    || previous.chapterTitle !== snapshot.chapterTitle
+    || previous.chapterStatus !== snapshot.chapterStatus
+    || previous.chapterDurationSeconds !== snapshot.chapterDurationSeconds
+    || previous.audioUrl !== snapshot.audioUrl
+  ) {
+    return true;
+  }
+
+  return Math.abs(snapshot.elapsedSeconds - previous.elapsedSeconds) >= RESUME_CACHE_MIN_ELAPSED_DELTA_SECONDS;
+}
+
+/**
+ * Paint the player from the last-known snapshot before `loadBooks()` resolves
+ * so refreshes don't flash 0:00 for the duration of the network request. The
+ * server's resume value still overrides this once the real data arrives.
+ */
+function restoreResumeCache() {
+  let cached;
+  try {
+    const raw = localStorage.getItem(RESUME_CACHE_KEY);
+    if (!raw) {
+      return;
+    }
+    cached = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  if (!cached?.bookId || cached.bookId !== state.activeBookId) {
+    return;
+  }
+
+  cachedSnapshot = cached;
+  lastResumeCacheSnapshot = cached;
+  state.elapsedSeconds = Number(cached.elapsedSeconds) || 0;
+
+  const chapterPosition = Number(cached.chapterPosition) || 0;
+  const chapterLabel = `Chapter ${chapterPosition + 1} - ${cached.chapterTitle || ""}`;
+  const duration = Number(cached.chapterDurationSeconds) || 0;
+  const progress = Math.max(0, Math.min(100, cached.bookProgress || 0));
+
+  dom.nowTitle.textContent = cached.bookTitle || "";
+  dom.nowMeta.textContent = `${chapterLabel} (${statusLabel(cached.chapterStatus)})`;
+  dom.bookProgress.textContent = `${progress}%`;
+  dom.progressRing.style.background = `
+    radial-gradient(circle at center, var(--panel-strong) 0 58%, transparent 59%),
+    conic-gradient(var(--accent) 0 ${progress}%, rgba(255, 255, 255, 0.14) ${progress}% 100%)
+  `;
+  dom.playerTitle.textContent = cached.bookTitle || "";
+  dom.playerChapter.textContent = chapterLabel;
+  dom.duration.textContent = formatTime(duration);
+  dom.elapsed.textContent = formatTime(state.elapsedSeconds);
+  dom.timeline.max = Math.max(1, Math.floor(duration));
+  dom.timeline.value = Math.min(Number(dom.timeline.max), Math.floor(state.elapsedSeconds));
+
+  if (!cached.audioUrl) {
+    return;
+  }
+
+  // Enable the play button so the user can resume immediately; index.html
+  // ships it disabled and the cache-restore path never runs `render()`'s
+  // full body which would otherwise toggle it for us.
+  dom.playToggle.disabled = false;
+  // Seeking during the cache window would be silently ignored because
+  // `currentChapter()` is not available yet. Disable those controls until
+  // `loadBooks()` hydrates real book/chapter data and `render()` re-enables
+  // them.
+  setSeekControlsEnabled(false);
+
+  // Start preloading the audio now so playback can begin the moment the user
+  // taps play, instead of waiting for loadBooks() + a fresh load() cycle.
+  state.isWaitingForStateSeek = true;
+  dom.audio.dataset.source = cached.audioUrl;
+  dom.audio.src = cached.audioUrl;
+  dom.audio.load();
+
+  const seekToCached = () => {
+    const target = Math.max(0, Math.min(dom.audio.duration, state.elapsedSeconds));
+    if (!Number.isFinite(target)) {
+      return;
+    }
+
+    const stateChanged = Math.abs(state.elapsedSeconds - target) >= 0.5;
+    state.elapsedSeconds = target;
+    state.isWaitingForStateSeek = false;
+
+    if (Math.abs(dom.audio.currentTime - target) >= 0.5) {
+      state.isSeekingFromState = true;
+      dom.audio.currentTime = target;
+      state.isSeekingFromState = false;
+    }
+
+    if (stateChanged) {
+      render();
+    }
+  };
+
+  if (hasAudioMetadata()) {
+    seekToCached();
+  } else {
+    cachedMetadataSeekHandler = () => {
+      cachedMetadataSeekHandler = null;
+      seekToCached();
+    };
+    dom.audio.addEventListener("loadedmetadata", cachedMetadataSeekHandler, { once: true });
+  }
+}
+
+function clearCachedMetadataSeekHandler() {
+  if (!cachedMetadataSeekHandler) {
+    return;
+  }
+
+  dom.audio.removeEventListener("loadedmetadata", cachedMetadataSeekHandler);
+  cachedMetadataSeekHandler = null;
+}
+
+/**
+ * Refresh just the dynamic portions of the player chrome from `state` +
+ * `cachedSnapshot`. Used while books are still loading so render() can react
+ * to play/pause/timeupdate without falling through to `renderEmpty()`.
+ */
+function paintCachedPlayer() {
+  if (!cachedSnapshot) {
+    return;
+  }
+  const fallbackDuration = Number(cachedSnapshot.chapterDurationSeconds) || 0;
+  const duration = Number.isFinite(dom.audio.duration) && dom.audio.duration > 0
+    ? dom.audio.duration
+    : fallbackDuration;
+  const max = Math.max(1, Math.floor(duration));
+
+  dom.duration.textContent = formatTime(duration);
+  dom.elapsed.textContent = formatTime(state.elapsedSeconds);
+  dom.timeline.max = max;
+  dom.timeline.value = Math.min(max, Math.floor(state.elapsedSeconds));
+  dom.playToggle.disabled = !cachedSnapshot.audioUrl;
+  setSeekControlsEnabled(false);
+  dom.playToggle.classList.toggle("is-playing", state.isPlaying);
+  dom.playToggle.setAttribute("aria-label", state.isPlaying ? "Pause" : "Play");
+}
+
+/**
+ * Resolves the current playback target, falling back to the cached snapshot
+ * during the bootstrap window when `state.books` is still empty. Returns
+ * `null` only when there is genuinely nothing to play.
+ */
+function activePlaybackTarget() {
+  const chapter = currentChapter();
+  if (chapter?.audioUrl) {
+    return chapter.audioUrl;
+  }
+  if (state.books.length === 0 && cachedSnapshot?.audioUrl) {
+    return cachedSnapshot.audioUrl;
+  }
+  return null;
 }
 
 function renderEmpty() {
@@ -144,9 +418,16 @@ function renderEmpty() {
   dom.elapsed.textContent = "0:00";
   dom.duration.textContent = "0:00";
   dom.timeline.value = 0;
+  setSeekControlsEnabled(false);
   dom.playToggle.disabled = true;
   dom.bookList.replaceChildren(emptyState("Your library is empty. Upload an ePub to create chapter records."));
   dom.chapterList.replaceChildren();
+}
+
+function setSeekControlsEnabled(isEnabled) {
+  dom.skipBack.disabled = !isEnabled;
+  dom.skipForward.disabled = !isEnabled;
+  dom.timeline.disabled = !isEnabled;
 }
 
 function renderBooks(active) {
@@ -228,11 +509,35 @@ function emptyState(message) {
   return element;
 }
 
+function restoreSelectedBookProgress() {
+  const book = activeBook();
+  if (!book?.resume) {
+    state.elapsedSeconds = 0;
+    return;
+  }
+
+  book.currentChapter = book.resume.chapter_index ?? book.currentChapter;
+  state.elapsedSeconds = Number(book.resume.elapsed_seconds || 0);
+}
+
 async function selectBook(id) {
+  if (id === state.activeBookId) {
+    return;
+  }
+
+  const outgoingProgress = progressPayload();
+  if (outgoingProgress) {
+    applyProgressPayload(outgoingProgress);
+    syncProgress(outgoingProgress);
+  }
+
+  if (!dom.audio.paused) {
+    state.suppressNextPauseSync = true;
+  }
   await setPlaying(false);
   state.activeBookId = id;
   localStorage.setItem("pubvox.activeBookId", id);
-  state.elapsedSeconds = activeBook()?.resume?.elapsed_seconds || 0;
+  restoreSelectedBookProgress();
   render();
   configureAudio();
 }
@@ -295,6 +600,7 @@ function configureAudio() {
   const nextSource = chapter?.audioUrl || "";
 
   if (dom.audio.dataset.source !== nextSource) {
+    state.isWaitingForStateSeek = Boolean(nextSource);
     dom.audio.dataset.source = nextSource;
     dom.audio.src = nextSource;
     dom.audio.load();
@@ -306,8 +612,10 @@ function configureAudio() {
 
 async function setPlaying(isPlaying) {
   const sequence = ++state.playbackRequestSeq;
-  const chapter = currentChapter();
-  if (isPlaying && !chapter?.audioUrl) {
+  // Fall back to the cached snapshot's audio URL during the bootstrap window
+  // so a user tap on the now-enabled play button isn't dropped just because
+  // `currentChapter()` is still null pending `loadBooks()`.
+  if (isPlaying && !activePlaybackTarget()) {
     state.isPlaying = false;
     render();
     return;
@@ -372,11 +680,18 @@ function waitForAudioMetadata() {
 }
 
 function skip(seconds) {
-  const duration = playbackDuration();
+  const chapter = currentChapter();
+  // Skip needs a known chapter duration to clamp against; during the bootstrap
+  // window we don't have one yet (cached durationSeconds is just an estimate),
+  // so ignore presses rather than risk truncating the cached elapsed to 0.
+  if (!chapter) {
+    return;
+  }
+  const duration = playbackDuration(chapter);
   const nextTime = Math.max(0, Math.min(duration, state.elapsedSeconds + seconds));
   state.elapsedSeconds = nextTime;
 
-  if (currentChapter()?.audioUrl) {
+  if (chapter.audioUrl) {
     dom.audio.currentTime = nextTime;
   }
 
@@ -427,6 +742,7 @@ function seekAudioToState() {
   const target = Math.max(0, Math.min(dom.audio.duration, state.elapsedSeconds));
   const stateChanged = Math.abs(state.elapsedSeconds - target) >= 0.5;
   state.elapsedSeconds = target;
+  state.isWaitingForStateSeek = false;
 
   if (Math.abs(dom.audio.currentTime - target) < 0.5) {
     if (stateChanged) {
@@ -462,8 +778,7 @@ function progressPercent(book, chapter, elapsedSeconds) {
 }
 
 /** Persist the current chapter and elapsed time for cross-device resume. */
-async function syncProgress() {
-  const payload = progressPayload();
+async function syncProgress(payload = progressPayload()) {
   if (!payload) {
     return;
   }
@@ -479,6 +794,16 @@ async function syncProgress() {
   } catch (error) {
     console.warn("Unable to sync progress", error);
   }
+}
+
+function applyProgressPayload(payload) {
+  payload.book.currentChapter = payload.body.chapterIndex;
+  payload.book.progress = payload.body.progressPercent;
+  payload.book.resume = {
+    ...(payload.book.resume || {}),
+    chapter_index: payload.body.chapterIndex,
+    elapsed_seconds: payload.body.elapsedSeconds,
+  };
 }
 
 function progressPayload() {
@@ -616,17 +941,23 @@ function updateMediaSession(book, chapter) {
 }
 
 dom.playToggle.addEventListener("click", () => setPlaying(!state.isPlaying));
-document.querySelector("#skip-back").addEventListener("click", () => skip(-15));
-document.querySelector("#skip-forward").addEventListener("click", () => skip(30));
+dom.skipBack.addEventListener("click", () => skip(-15));
+dom.skipForward.addEventListener("click", () => skip(30));
 document.querySelector("#refresh-books").addEventListener("click", loadBooks);
 dom.timeline.addEventListener("input", (event) => {
+  const chapter = currentChapter();
+  // See `skip()`: ignore drags until the real chapter is available so we don't
+  // clobber the cached UI with `renderEmpty()`.
+  if (!chapter) {
+    return;
+  }
   state.elapsedSeconds = Number(event.target.value);
-  if (currentChapter()?.audioUrl) {
+  if (chapter.audioUrl) {
     dom.audio.currentTime = state.elapsedSeconds;
   }
   render();
 });
-dom.timeline.addEventListener("change", syncProgress);
+dom.timeline.addEventListener("change", () => syncProgress());
 dom.uploadInput.addEventListener("change", (event) => uploadFile(event.target.files[0]));
 dom.uploadDropzone.addEventListener("dragover", (event) => {
   event.preventDefault();
@@ -639,16 +970,29 @@ dom.uploadDropzone.addEventListener("drop", (event) => {
   uploadFile(event.dataTransfer.files[0]);
 });
 dom.audio.addEventListener("play", () => {
+  if (state.books.length === 0 && cachedSnapshot) {
+    bootstrapPlaybackStarted = true;
+  }
   state.isPlaying = true;
   render();
 });
 dom.audio.addEventListener("pause", () => {
   state.isPlaying = false;
   render();
+  if (state.suppressNextPauseSync) {
+    state.suppressNextPauseSync = false;
+    return;
+  }
   syncProgress();
 });
 dom.audio.addEventListener("timeupdate", () => {
-  if (state.isSeekingFromState) {
+  if (state.isSeekingFromState || state.isWaitingForStateSeek) {
+    return;
+  }
+  // Suppress pre-seek timeupdates fired during the cache-window audio load
+  // (currentTime starts at 0 before the cached seek lands). Once the user
+  // taps play, isPlaying flips true and `timeupdate` drives the UI normally.
+  if (!state.books.length && !state.isPlaying) {
     return;
   }
 
@@ -656,6 +1000,9 @@ dom.audio.addEventListener("timeupdate", () => {
   render();
 });
 dom.audio.addEventListener("loadedmetadata", () => {
+  // The cache-restore path attaches a one-shot seeker for the bootstrap
+  // window; here we just sync the audio element to the live `state` and
+  // repaint. `render()` handles the cache-window case via `paintCachedPlayer()`.
   seekAudioToState();
   render();
 });
@@ -668,6 +1015,7 @@ document.addEventListener("visibilitychange", () => {
 });
 state.syncTimer = setInterval(syncProgress, 5000);
 
+restoreResumeCache();
 loadBooks().catch((error) => {
   dom.bookList.replaceChildren(emptyState(error.message));
 });
