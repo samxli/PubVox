@@ -1,3 +1,9 @@
+---
+title: PubVox
+sdk: docker
+app_port: 7860
+---
+
 # PubVox 🎧📖
 
 > Your personal, self-hosted ePub to Audiobook streaming server.
@@ -49,6 +55,28 @@ The easiest way to get PubVox running is via Docker Compose.
 3. Open your browser and navigate to `http://localhost:8000`.
 
 *(Note: For the PWA and Media Session API to work properly on mobile devices, PubVox must be served over HTTPS. We recommend putting it behind a reverse proxy like Caddy, Nginx Proxy Manager, or Traefik).*
+
+## 🤗 Hugging Face Spaces Trial
+
+PubVox can run as a Docker Space on CPU Basic hardware. Because Spaces filesystems are ephemeral by default, attach a read-write Storage Bucket at `/app/data` before treating the instance as persistent.
+
+Recommended Space setup:
+
+- SDK: `docker`
+- App port: `7860`
+- Storage Bucket mount path: `/app/data`
+- Runtime variable: `PUBVOX_DATA_DIR=/app/data`
+- Optional runtime variable: `PUBVOX_TTS_ENABLED=1` to generate audio with Edge TTS
+- Optional runtime variable: `PUBVOX_TTS_VOICE=en-US-AriaNeural`
+
+Smoke test after deploy:
+
+1. Open `/api/health` and verify it returns `{"status":"ok"}`.
+2. Upload a small `.epub` file.
+3. If TTS is enabled, wait for generated chapter audio.
+4. Restart or let the Space sleep, then confirm the library, progress, uploaded ePub, and generated audio still exist.
+
+This deployment mode is intended for a personal or demo instance. The current app has a single shared local user and no authentication, so avoid exposing private books in a public Space.
 
 ## 🛠️ Development Setup
 
