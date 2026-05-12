@@ -8,21 +8,31 @@ persistence, parsing, and TTS work to the package modules.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
+import re
 from pathlib import Path
 import shutil
 import uuid
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from pubvox import database, tts
-from pubvox.config import STATIC_DIR, UPLOAD_DIR
+from pubvox.config import AUDIO_DIR, STATIC_DIR, UPLOAD_DIR
 from pubvox.epub_parser import parse_epub
 
 
 STATIC_ROOT = STATIC_DIR.resolve()
+STATIC_INDEX = STATIC_ROOT / "index.html"
+ASSET_VERSION_PLACEHOLDER = "__PUBVOX_ASSET_VERSION__"
+VERSIONED_ASSET_PATHS = (
+    STATIC_ROOT / "styles.css",
+    STATIC_ROOT / "app.js",
+)
+BOOK_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -97,6 +107,20 @@ def book(book_id: str) -> dict:
     return found
 
 
+@app.delete("/api/books/{book_id}")
+def delete_book(book_id: str) -> dict[str, bool]:
+    """Remove a book from the library and delete its stored artifacts."""
+    if not BOOK_ID_PATTERN.fullmatch(book_id):
+        raise HTTPException(status_code=404, detail="Book not found.")
+
+    deleted_book_id = database.delete_book(book_id)
+    if not deleted_book_id:
+        raise HTTPException(status_code=404, detail="Book not found.")
+
+    remove_book_files(deleted_book_id)
+    return {"deleted": True}
+
+
 @app.post("/api/books/{book_id}/progress")
 def save_progress(book_id: str, progress: ProgressUpdate) -> dict:
     """Persist listening progress so reloads and other devices can resume."""
@@ -125,10 +149,52 @@ def chapter_audio(book_id: str, position: int) -> FileResponse:
     return FileResponse(audio_path, media_type="audio/mpeg", filename=audio_path.name)
 
 
+def remove_book_files(book_id: str) -> None:
+    """Best-effort cleanup for uploaded ePub and generated chapter audio."""
+    try:
+        upload_path, audio_dir = book_artifact_paths(book_id)
+    except ValueError:
+        logger.warning("Skipping artifact cleanup for invalid book ID %s", book_id, exc_info=True)
+        return
+
+    try:
+        upload_path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Unable to delete uploaded ePub for book %s", book_id, exc_info=True)
+
+    if audio_dir.exists():
+        try:
+            shutil.rmtree(audio_dir)
+        except OSError:
+            logger.warning("Unable to delete audio directory for book %s", book_id, exc_info=True)
+
+
+def book_artifact_paths(book_id: str) -> tuple[Path, Path]:
+    """Return validated artifact paths for a server-generated book ID."""
+    if not BOOK_ID_PATTERN.fullmatch(book_id):
+        raise ValueError("invalid book id")
+
+    upload_root = UPLOAD_DIR.resolve()
+    audio_root = AUDIO_DIR.resolve()
+    upload_path = (upload_root / f"{book_id}.epub").resolve()
+    audio_dir = (audio_root / book_id).resolve()
+    require_child_path(upload_path, upload_root)
+    require_child_path(audio_dir, audio_root)
+    return upload_path, audio_dir
+
+
+def require_child_path(path: Path, root: Path) -> None:
+    """Ensure a resolved path is contained by its resolved storage root."""
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"path escapes storage root: {path}") from exc
+
+
 @app.get("/")
-def index() -> FileResponse:
+def index() -> HTMLResponse:
     """Serve the PWA shell."""
-    return FileResponse(STATIC_ROOT / "index.html")
+    return pwa_shell()
 
 
 @app.get("/manifest.webmanifest")
@@ -138,12 +204,26 @@ def manifest() -> FileResponse:
 
 
 @app.get("/{path:path}", include_in_schema=False)
-def static_fallback(path: str) -> FileResponse:
+def static_fallback(path: str) -> HTMLResponse:
     """Fall back to the PWA shell for browser routes outside the API."""
     if path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Not found.")
 
-    return FileResponse(STATIC_ROOT / "index.html")
+    return pwa_shell()
+
+
+def pwa_shell() -> HTMLResponse:
+    """Serve the HTML shell with a cache token matching current static assets."""
+    html = STATIC_INDEX.read_text(encoding="utf-8").replace(
+        ASSET_VERSION_PLACEHOLDER,
+        static_asset_version(),
+    )
+    return HTMLResponse(html)
+
+
+def static_asset_version() -> str:
+    """Return a stable token that changes whenever bundled CSS or JS changes."""
+    return str(max(path.stat().st_mtime_ns for path in VERSIONED_ASSET_PATHS))
 
 
 if __name__ == "__main__":
