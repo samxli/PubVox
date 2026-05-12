@@ -42,6 +42,11 @@ button:disabled {
   opacity: 0.45;
 }
 
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 h1,
 h2,
 p {

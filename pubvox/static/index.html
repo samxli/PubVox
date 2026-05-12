@@ -94,7 +94,7 @@
         </div>
 
         <div class="player-controls">
-          <button type="button" id="skip-back" class="skip-button" aria-label="Back 15 seconds">
+          <button type="button" id="skip-back" class="skip-button" aria-label="Back 15 seconds" disabled>
             <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
               <path class="skip-triangle" d="M25 12 13 24l12 12z"></path>
               <path class="skip-triangle" d="M36 12 24 24l12 12z"></path>
@@ -109,7 +109,7 @@
               <path d="M8 7h3v10H8zM13 7h3v10h-3z"></path>
             </svg>
           </button>
-          <button type="button" id="skip-forward" class="skip-button" aria-label="Forward 30 seconds">
+          <button type="button" id="skip-forward" class="skip-button" aria-label="Forward 30 seconds" disabled>
             <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
               <path class="skip-triangle" d="M12 12 24 24 12 36z"></path>
               <path class="skip-triangle" d="M23 12 35 24 23 36z"></path>
@@ -120,7 +120,7 @@
 
         <div class="timeline">
           <span id="elapsed">0:00</span>
-          <input id="timeline" type="range" min="0" max="100" value="0" aria-label="Playback progress">
+          <input id="timeline" type="range" min="0" max="100" value="0" aria-label="Playback progress" disabled>
           <span id="duration">0:00</span>
         </div>
         <audio id="audio" preload="metadata"></audio>

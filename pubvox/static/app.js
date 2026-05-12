@@ -10,14 +10,17 @@ const state = {
   elapsedSeconds: 0,
   isPlaying: false,
   isSeekingFromState: false,
+  isWaitingForStateSeek: false,
   chapterSelectionSeq: 0,
   playbackRequestSeq: 0,
   pollTimer: null,
   syncTimer: null,
   initialLoadComplete: false,
+  suppressNextPauseSync: false,
 };
 
 const RESUME_CACHE_KEY = "pubvox.resumeCache";
+const RESUME_CACHE_MIN_ELAPSED_DELTA_SECONDS = 1;
 
 // Parsed cache payload held in memory while `state.books` is still loading.
 // Set by `restoreResumeCache()` on bootstrap, consulted by `render()` and
@@ -25,6 +28,8 @@ const RESUME_CACHE_KEY = "pubvox.resumeCache";
 // the real library data takes over.
 let cachedSnapshot = null;
 let bootstrapPlaybackStarted = false;
+let lastResumeCacheSnapshot = null;
+let cachedMetadataSeekHandler = null;
 
 const dom = {
   audio: document.querySelector("#audio"),
@@ -37,6 +42,8 @@ const dom = {
   playerTitle: document.querySelector("#player-title"),
   playerChapter: document.querySelector("#player-chapter"),
   playToggle: document.querySelector("#play-toggle"),
+  skipBack: document.querySelector("#skip-back"),
+  skipForward: document.querySelector("#skip-forward"),
   timeline: document.querySelector("#timeline"),
   elapsed: document.querySelector("#elapsed"),
   duration: document.querySelector("#duration"),
@@ -93,6 +100,7 @@ async function loadBooks() {
 
   // Live data takes over from the optimistic cache snapshot now that we have
   // real books to render against; subsequent calls hit the normal code paths.
+  clearCachedMetadataSeekHandler();
   cachedSnapshot = null;
 
   if (!state.books.some((book) => book.id === state.activeBookId)) {
@@ -190,6 +198,7 @@ function render() {
   dom.timeline.max = Math.max(1, Math.floor(duration));
   dom.timeline.value = Math.min(Number(dom.timeline.max), Math.floor(state.elapsedSeconds));
   dom.playToggle.disabled = !chapter.audioUrl;
+  setSeekControlsEnabled(Boolean(chapter.audioUrl));
   dom.playToggle.classList.toggle("is-playing", state.isPlaying);
   dom.playToggle.setAttribute("aria-label", state.isPlaying ? "Pause" : "Play");
 
@@ -204,26 +213,54 @@ function render() {
  * the next page load, before the `/api/books` round trip resolves.
  */
 function saveResumeCache(book, chapter) {
+  const snapshot = {
+    bookId: book.id,
+    bookTitle: book.title,
+    bookAuthor: book.author,
+    bookProgress: book.progress || 0,
+    chapterPosition: chapter.position,
+    chapterTitle: chapter.title,
+    chapterStatus: chapter.status,
+    chapterDurationSeconds: chapter.durationSeconds || 0,
+    elapsedSeconds: state.elapsedSeconds,
+    audioUrl: chapter.audioUrl || "",
+  };
+
+  if (!shouldWriteResumeCache(snapshot)) {
+    return;
+  }
+
   try {
-    localStorage.setItem(
-      RESUME_CACHE_KEY,
-      JSON.stringify({
-        bookId: book.id,
-        bookTitle: book.title,
-        bookAuthor: book.author,
-        bookProgress: book.progress || 0,
-        chapterPosition: chapter.position,
-        chapterTitle: chapter.title,
-        chapterStatus: chapter.status,
-        chapterDurationSeconds: chapter.durationSeconds || 0,
-        elapsedSeconds: state.elapsedSeconds,
-        audioUrl: chapter.audioUrl || "",
-      }),
-    );
+    localStorage.setItem(RESUME_CACHE_KEY, JSON.stringify(snapshot));
   } catch {
     // localStorage may be full or disabled (private mode); the cache is
     // strictly a perf optimization, so swallow the error.
   }
+
+  lastResumeCacheSnapshot = snapshot;
+}
+
+function shouldWriteResumeCache(snapshot) {
+  const previous = lastResumeCacheSnapshot;
+  if (!previous) {
+    return true;
+  }
+
+  if (
+    previous.bookId !== snapshot.bookId
+    || previous.bookTitle !== snapshot.bookTitle
+    || previous.bookAuthor !== snapshot.bookAuthor
+    || previous.bookProgress !== snapshot.bookProgress
+    || previous.chapterPosition !== snapshot.chapterPosition
+    || previous.chapterTitle !== snapshot.chapterTitle
+    || previous.chapterStatus !== snapshot.chapterStatus
+    || previous.chapterDurationSeconds !== snapshot.chapterDurationSeconds
+    || previous.audioUrl !== snapshot.audioUrl
+  ) {
+    return true;
+  }
+
+  return Math.abs(snapshot.elapsedSeconds - previous.elapsedSeconds) >= RESUME_CACHE_MIN_ELAPSED_DELTA_SECONDS;
 }
 
 /**
@@ -247,6 +284,7 @@ function restoreResumeCache() {
   }
 
   cachedSnapshot = cached;
+  lastResumeCacheSnapshot = cached;
   state.elapsedSeconds = Number(cached.elapsedSeconds) || 0;
 
   const chapterPosition = Number(cached.chapterPosition) || 0;
@@ -276,9 +314,15 @@ function restoreResumeCache() {
   // ships it disabled and the cache-restore path never runs `render()`'s
   // full body which would otherwise toggle it for us.
   dom.playToggle.disabled = false;
+  // Seeking during the cache window would be silently ignored because
+  // `currentChapter()` is not available yet. Disable those controls until
+  // `loadBooks()` hydrates real book/chapter data and `render()` re-enables
+  // them.
+  setSeekControlsEnabled(false);
 
   // Start preloading the audio now so playback can begin the moment the user
   // taps play, instead of waiting for loadBooks() + a fresh load() cycle.
+  state.isWaitingForStateSeek = true;
   dom.audio.dataset.source = cached.audioUrl;
   dom.audio.src = cached.audioUrl;
   dom.audio.load();
@@ -291,6 +335,7 @@ function restoreResumeCache() {
 
     const stateChanged = Math.abs(state.elapsedSeconds - target) >= 0.5;
     state.elapsedSeconds = target;
+    state.isWaitingForStateSeek = false;
 
     if (Math.abs(dom.audio.currentTime - target) >= 0.5) {
       state.isSeekingFromState = true;
@@ -306,8 +351,21 @@ function restoreResumeCache() {
   if (hasAudioMetadata()) {
     seekToCached();
   } else {
-    dom.audio.addEventListener("loadedmetadata", seekToCached, { once: true });
+    cachedMetadataSeekHandler = () => {
+      cachedMetadataSeekHandler = null;
+      seekToCached();
+    };
+    dom.audio.addEventListener("loadedmetadata", cachedMetadataSeekHandler, { once: true });
   }
+}
+
+function clearCachedMetadataSeekHandler() {
+  if (!cachedMetadataSeekHandler) {
+    return;
+  }
+
+  dom.audio.removeEventListener("loadedmetadata", cachedMetadataSeekHandler);
+  cachedMetadataSeekHandler = null;
 }
 
 /**
@@ -330,6 +388,7 @@ function paintCachedPlayer() {
   dom.timeline.max = max;
   dom.timeline.value = Math.min(max, Math.floor(state.elapsedSeconds));
   dom.playToggle.disabled = !cachedSnapshot.audioUrl;
+  setSeekControlsEnabled(false);
   dom.playToggle.classList.toggle("is-playing", state.isPlaying);
   dom.playToggle.setAttribute("aria-label", state.isPlaying ? "Pause" : "Play");
 }
@@ -359,9 +418,16 @@ function renderEmpty() {
   dom.elapsed.textContent = "0:00";
   dom.duration.textContent = "0:00";
   dom.timeline.value = 0;
+  setSeekControlsEnabled(false);
   dom.playToggle.disabled = true;
   dom.bookList.replaceChildren(emptyState("Your library is empty. Upload an ePub to create chapter records."));
   dom.chapterList.replaceChildren();
+}
+
+function setSeekControlsEnabled(isEnabled) {
+  dom.skipBack.disabled = !isEnabled;
+  dom.skipForward.disabled = !isEnabled;
+  dom.timeline.disabled = !isEnabled;
 }
 
 function renderBooks(active) {
@@ -443,11 +509,35 @@ function emptyState(message) {
   return element;
 }
 
+function restoreSelectedBookProgress() {
+  const book = activeBook();
+  if (!book?.resume) {
+    state.elapsedSeconds = 0;
+    return;
+  }
+
+  book.currentChapter = book.resume.chapter_index ?? book.currentChapter;
+  state.elapsedSeconds = Number(book.resume.elapsed_seconds || 0);
+}
+
 async function selectBook(id) {
+  if (id === state.activeBookId) {
+    return;
+  }
+
+  const outgoingProgress = progressPayload();
+  if (outgoingProgress) {
+    applyProgressPayload(outgoingProgress);
+    syncProgress(outgoingProgress);
+  }
+
+  if (!dom.audio.paused) {
+    state.suppressNextPauseSync = true;
+  }
   await setPlaying(false);
   state.activeBookId = id;
   localStorage.setItem("pubvox.activeBookId", id);
-  state.elapsedSeconds = activeBook()?.resume?.elapsed_seconds || 0;
+  restoreSelectedBookProgress();
   render();
   configureAudio();
 }
@@ -510,6 +600,7 @@ function configureAudio() {
   const nextSource = chapter?.audioUrl || "";
 
   if (dom.audio.dataset.source !== nextSource) {
+    state.isWaitingForStateSeek = Boolean(nextSource);
     dom.audio.dataset.source = nextSource;
     dom.audio.src = nextSource;
     dom.audio.load();
@@ -651,6 +742,7 @@ function seekAudioToState() {
   const target = Math.max(0, Math.min(dom.audio.duration, state.elapsedSeconds));
   const stateChanged = Math.abs(state.elapsedSeconds - target) >= 0.5;
   state.elapsedSeconds = target;
+  state.isWaitingForStateSeek = false;
 
   if (Math.abs(dom.audio.currentTime - target) < 0.5) {
     if (stateChanged) {
@@ -686,8 +778,7 @@ function progressPercent(book, chapter, elapsedSeconds) {
 }
 
 /** Persist the current chapter and elapsed time for cross-device resume. */
-async function syncProgress() {
-  const payload = progressPayload();
+async function syncProgress(payload = progressPayload()) {
   if (!payload) {
     return;
   }
@@ -703,6 +794,16 @@ async function syncProgress() {
   } catch (error) {
     console.warn("Unable to sync progress", error);
   }
+}
+
+function applyProgressPayload(payload) {
+  payload.book.currentChapter = payload.body.chapterIndex;
+  payload.book.progress = payload.body.progressPercent;
+  payload.book.resume = {
+    ...(payload.book.resume || {}),
+    chapter_index: payload.body.chapterIndex,
+    elapsed_seconds: payload.body.elapsedSeconds,
+  };
 }
 
 function progressPayload() {
@@ -840,8 +941,8 @@ function updateMediaSession(book, chapter) {
 }
 
 dom.playToggle.addEventListener("click", () => setPlaying(!state.isPlaying));
-document.querySelector("#skip-back").addEventListener("click", () => skip(-15));
-document.querySelector("#skip-forward").addEventListener("click", () => skip(30));
+dom.skipBack.addEventListener("click", () => skip(-15));
+dom.skipForward.addEventListener("click", () => skip(30));
 document.querySelector("#refresh-books").addEventListener("click", loadBooks);
 dom.timeline.addEventListener("input", (event) => {
   const chapter = currentChapter();
@@ -878,10 +979,14 @@ dom.audio.addEventListener("play", () => {
 dom.audio.addEventListener("pause", () => {
   state.isPlaying = false;
   render();
+  if (state.suppressNextPauseSync) {
+    state.suppressNextPauseSync = false;
+    return;
+  }
   syncProgress();
 });
 dom.audio.addEventListener("timeupdate", () => {
-  if (state.isSeekingFromState) {
+  if (state.isSeekingFromState || state.isWaitingForStateSeek) {
     return;
   }
   // Suppress pre-seek timeupdates fired during the cache-window audio load
