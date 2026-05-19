@@ -26,6 +26,7 @@ Pass --no-storage to skip this step.
 from __future__ import annotations
 
 import argparse
+import shutil
 import tempfile
 import textwrap
 from pathlib import Path
@@ -137,8 +138,8 @@ def build_variables(tts_enabled: bool, tts_voice: str) -> dict[str, str]:
     variables = dict(DEFAULT_VARIABLES)
     if tts_enabled:
         variables["PUBVOX_TTS_ENABLED"] = "1"
-    if tts_voice:
-        variables["PUBVOX_TTS_VOICE"] = tts_voice
+        if tts_voice:
+            variables["PUBVOX_TTS_VOICE"] = tts_voice
     return variables
 
 
@@ -186,7 +187,7 @@ def main() -> None:
     if args.dry_run:
         print("[dry-run] Would create/update the Space and upload files.")
         print(f"[dry-run] README would have {len(HF_README_FRONTMATTER.splitlines())} lines of frontmatter prepended.")
-        print(f"[dry-run] Upload dir: {ROOT_DIR}")
+        print(f"[dry-run] Upload dir (copy of project with patched README): <tempdir>")
         print(f"[dry-run] Ignore patterns: {IGNORE_PATTERNS}")
         return
 
@@ -198,6 +199,13 @@ def main() -> None:
         space_sdk="docker",
         private=args.private,
         exist_ok=True,
+    )
+    # Always enforce the visibility setting (create_repo is a no-op when the
+    # Space already exists, so --private would otherwise be silently ignored).
+    api.update_repo_settings(
+        repo_id=args.repo_id,
+        repo_type="space",
+        private=args.private,
     )
 
     # Set persistent storage (create a bucket and mount it at /app/data)
@@ -235,25 +243,23 @@ def main() -> None:
             value=value,
         )
 
-    # Upload files with frontmatter-injected README
+    # Upload files with frontmatter-injected README (single commit)
     print("Uploading files...")
     with tempfile.TemporaryDirectory() as tmp_dir:
+        shutil.copytree(
+            ROOT_DIR,
+            tmp_dir,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(*IGNORE_PATTERNS),
+            symlinks=False,
+        )
         tmp_readme = Path(tmp_dir) / "README.md"
         tmp_readme.write_text(build_readme_content(), encoding="utf-8")
 
         api.upload_folder(
             repo_id=args.repo_id,
             repo_type="space",
-            folder_path=str(ROOT_DIR),
-            commit_message="Deploy PubVox to Hugging Face Space",
-            ignore_patterns=IGNORE_PATTERNS + ["README.md"],
-        )
-        # Upload the patched README separately so frontmatter is included in one commit
-        api.upload_file(
-            path_or_fileobj=str(tmp_readme),
-            path_in_repo="README.md",
-            repo_id=args.repo_id,
-            repo_type="space",
+            folder_path=str(tmp_dir),
             commit_message="Deploy PubVox to Hugging Face Space",
         )
 
