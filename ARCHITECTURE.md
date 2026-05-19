@@ -11,7 +11,7 @@ To prioritize simplicity and minimize the footprint, the system uses a **Monolit
 - **Frontend:** A lightweight Progressive Web App (PWA) using Vanilla JavaScript / Alpine.js for playback and OS integration.
 - **Backend:** A single Python web server handling APIs, ePub parsing, and asynchronous TTS generation.
 - **Database & Storage:** SQLite for relational data and local file storage for media.
-- **TTS Engine:** Edge TTS (Microsoft Edge Read Aloud API wrapper) or a highly compressed local model (like Piper TTS) to ensure it runs comfortably on low-resource environments.
+- **TTS Engine:** Edge TTS (Microsoft Edge Read Aloud API wrapper) to ensure it runs comfortably on low-resource environments.
 
 ---
 
@@ -27,7 +27,7 @@ To prioritize simplicity and minimize the footprint, the system uses a **Monolit
 
 ### 3.2. Backend & TTS Processing (Python Monolith)
 
-- **Framework:** FastAPI or Flask (Python). Python is ideal for handling ePub extraction and TTS libraries.
+- **Framework:** FastAPI (Python). Python is ideal for handling ePub extraction and TTS libraries.
 - **Authentication:** Simple session-based auth or lightweight JWT tokens.
 - **ePub Processing:**
   - Uploaded `.epub` files are parsed using libraries like `EbookLib` and `BeautifulSoup`.
@@ -59,4 +59,5 @@ To prioritize simplicity and minimize the footprint, the system uses a **Monolit
 - **Dockerized (Single Container):** The application runtime (frontend assets and Python server) is packaged into a single `Dockerfile`.
 - **Volumes:** A single mapped volume (e.g., `/app/data`) stores the SQLite database and media files, ensuring data persists across container restarts.
 - **Reverse Proxy:** Expected to be placed behind a simple reverse proxy (like Caddy or Nginx) for automatic HTTPS, which is required for PWAs and the Media Session API.
+- **Hugging Face Spaces:** The same Dockerfile can be deployed as a Docker Space via `scripts/deploy_hf.py`. The script handles Space creation, environment variable configuration, and uploads with the required HF metadata. Persistent storage is needed to retain data across Space sleeps and restarts.
 
