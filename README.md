@@ -14,7 +14,7 @@
 
 ## 🏗️ Architecture & Tech Stack
 
-- **Backend:** Python (FastAPI/Flask)
+- **Backend:** Python (FastAPI)
 - **Frontend:** Vanilla JavaScript / Alpine.js (Minimal PWA, served directly by the backend)
 - **Database:** SQLite (No external DB containers required!)
 - **TTS Engine:** `edge-tts` (Asynchronous processing)
@@ -50,6 +50,39 @@ The easiest way to get PubVox running is via Docker Compose.
 
 *(Note: For the PWA and Media Session API to work properly on mobile devices, PubVox must be served over HTTPS. We recommend putting it behind a reverse proxy like Caddy, Nginx Proxy Manager, or Traefik).*
 
+## 🤗 Hugging Face Spaces
+
+PubVox can run as a Docker Space on CPU Basic hardware. A deploy script handles Space creation, configuration, and uploads — keeping this repository free of HF-specific metadata.
+
+### Prerequisites
+
+- A [Hugging Face](https://huggingface.co) account
+- A write access token from [hf.co/settings/tokens](https://huggingface.co/settings/tokens)
+- `huggingface_hub` installed (`pip install huggingface_hub`)
+
+### Deploy
+
+```shell
+python scripts/deploy_hf.py --repo-id <your-username>/pubvox --token <your-hf-token> --tts-enabled
+```
+
+Run with `--help` for the full list of options, including `--tts-voice`, `--private`, `--hardware`, and `--no-storage`.
+
+### Persistent Storage
+
+A storage bucket is automatically created and mounted at `/app/data` by the deploy script. No manual setup is needed unless you pass `--no-storage`.
+
+### Smoke Test
+
+1. Open `/api/health` and verify it returns `{"status":"ok"}`.
+2. Upload a small `.epub` file.
+3. If TTS is enabled, wait for generated chapter audio.
+4. Restart or let the Space sleep, then confirm the library, progress, uploaded ePub, and generated audio still exist.
+
+### Caveats
+
+This deployment mode is intended for a personal or demo instance. The current app has a single shared local user and no authentication, so avoid exposing private books in a public Space.
+
 ## 🛠️ Development Setup
 
 If you want to run PubVox locally without Docker or contribute to the project:
@@ -78,15 +111,6 @@ If you want to run PubVox locally without Docker or contribute to the project:
    ```shell
    PUBVOX_TTS_ENABLED=1 python main.py
    ```
-
-## 🗺️ Roadmap
-
-- Core ePub parsing and chapter segmentation
-- Edge TTS integration and background queueing
-- Minimal PWA UI and HTML5 Audio integration
-- Media Session API hooks for lock-screen/car controls
-- Multi-user SQLite auth
-- Dockerization
 
 ## 📄 License
 
