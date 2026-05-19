@@ -81,6 +81,15 @@ IGNORE_PATTERNS = [
 ]
 
 
+def _validate_repo_id(value: str) -> str:
+    if "/" not in value:
+        raise argparse.ArgumentTypeError(
+            f"Invalid repo ID '{value}'. Must be in the format 'namespace/repo-name' "
+            "(e.g. 'username/pubvox')."
+        )
+    return value
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Deploy PubVox to a Hugging Face Docker Space.",
@@ -88,6 +97,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--repo-id",
         required=True,
+        type=_validate_repo_id,
         help="HF Space repo ID (e.g. 'username/pubvox').",
     )
     parser.add_argument(
