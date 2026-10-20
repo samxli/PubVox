@@ -60,7 +60,7 @@ Run `python scripts/deploy_hf.py --help` for the full list.
 
 The script creates a private storage bucket and mounts it at `/app/data`, which is where PubVox keeps `app.db`, uploaded ePubs, and generated chapter audio. No manual setup is needed unless you pass `--no-storage`. `--no-storage` only skips this setup step; it does not unmount a bucket already attached to the Space, so an existing Space can keep persisting data.
 
-If the bucket already exists and is public, the script stops with an error. Make it private in Hugging Face settings or delete it, then rerun.
+If the bucket already exists and is public, the script stops with an error. Make it private in Hugging Face settings or delete it, then rerun. Existing mounts other than `/app/data` are preserved; if `/app/data` is already mounted to a different bucket, the script stops and asks you to unmount or migrate it first.
 
 ## Configuration on the Space
 

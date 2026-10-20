@@ -177,6 +177,20 @@ def is_payment_required(exc: Exception) -> bool:
     return getattr(response, "status_code", None) == 402
 
 
+def retained_volumes(existing: list[Volume], bucket_id: str) -> list[Volume]:
+    """Keep unrelated mounts and attach the data bucket at /app/data."""
+    for volume in existing:
+        if volume.mount_path == "/app/data" and volume.source != bucket_id:
+            raise SystemExit(
+                f"/app/data is already mounted to '{volume.source}'. "
+                "Unmount it or migrate its data in Hugging Face settings, "
+                "then rerun."
+            )
+    volumes = [volume for volume in existing if volume.mount_path != "/app/data"]
+    volumes.append(Volume(type="bucket", source=bucket_id, mount_path="/app/data"))
+    return volumes
+
+
 def check_auth(api: HfApi) -> None:
     """Verify the token is valid before attempting any operations."""
     try:
@@ -259,15 +273,13 @@ def main() -> None:
                 "Make it private in Hugging Face settings or delete it, then rerun."
             )
         print("Mounting bucket at /app/data...")
+        existing = (
+            api.space_info(repo_id=args.repo_id, expand=["runtime"]).runtime.volumes
+            or []
+        )
         api.set_space_volumes(
             repo_id=args.repo_id,
-            volumes=[
-                Volume(
-                    type="bucket",
-                    source=f"{namespace}/{space_name}-data",
-                    mount_path="/app/data",
-                ),
-            ],
+            volumes=retained_volumes(existing, bucket_id),
         )
 
     # Set hardware
