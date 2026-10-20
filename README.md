@@ -43,13 +43,13 @@ The repository includes a `docker-compose.yml` with TTS enabled and a persistent
 
 4. Upload an ePub. Chapters are queued immediately; audio becomes playable as each chapter finishes generating.
 
-The compose file enables TTS by default. Disable it with `PUBVOX_TTS_ENABLED=0 docker compose up -d` (or an `.env` file). If you previously stored data in a local `./data` bind mount, copy that directory into the `pubvox-data` volume before switching.
+TTS is on by default, in Compose and elsewhere. Disable it with `PUBVOX_TTS_ENABLED=0 docker compose up -d` (or an `.env` file). If you previously stored data in a local `./data` bind mount, copy that directory into the `pubvox-data` volume before switching.
 
 To run without Compose:
 
 ```shell
 docker build -t pubvox .
-docker run -d --name pubvox -p 8000:7860 -e PUBVOX_TTS_ENABLED=1 -v pubvox-data:/app/data pubvox
+docker run -d --name pubvox -p 8000:7860 -v pubvox-data:/app/data pubvox
 ```
 
 The container listens on port `7860`; Compose maps it to `8000`. To change the published port, update the `ports` mapping in `docker-compose.yml` (or the `-p` flag), not just the `PORT` variable, which only changes the port inside the container.
@@ -61,7 +61,7 @@ For the PWA and Media Session API to work properly on mobile devices, PubVox mus
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PUBVOX_DATA_DIR` | `./data` (`/app/data` in Docker) | Directory for `app.db`, uploaded ePubs, and generated audio |
-| `PUBVOX_TTS_ENABLED` | off | Set to `1`, `true`, `yes`, or `on` to generate audio with Edge TTS |
+| `PUBVOX_TTS_ENABLED` | on | Set to `0`, `false`, `no`, or `off` to skip audio generation (books are marked unavailable) |
 | `PUBVOX_TTS_VOICE` | `en-US-AriaNeural` | Edge TTS voice name |
 | `PUBVOX_PASSWORD` | *(empty)* | When set, the API requires this password; the app shows an unlock screen once per browser session |
 | `PORT` | `7860` (Docker image) | Container port used by the Docker entrypoint |
@@ -105,10 +105,10 @@ If you want to run PubVox locally without Docker or contribute to the project:
 
    The app is served at `http://localhost:8000`.
 
-   By default, uploaded books are parsed and stored without contacting the TTS provider. To enable Edge TTS generation during development:
+   Audio generation via Edge TTS is on by default. To develop without contacting the TTS provider:
 
    ```shell
-   PUBVOX_TTS_ENABLED=1 python main.py
+   PUBVOX_TTS_ENABLED=0 python main.py
    ```
 
    Local data (SQLite database, uploads, audio) is written to `./data` unless `PUBVOX_DATA_DIR` is set.

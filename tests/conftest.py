@@ -10,7 +10,7 @@ import tempfile
 test_data_dir = tempfile.mkdtemp(prefix="pubvox-tests-")
 atexit.register(shutil.rmtree, test_data_dir, ignore_errors=True)
 os.environ["PUBVOX_DATA_DIR"] = test_data_dir
-os.environ.pop("PUBVOX_TTS_ENABLED", None)
+os.environ["PUBVOX_TTS_ENABLED"] = "0"
 
 from pathlib import Path
 
