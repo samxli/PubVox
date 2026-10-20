@@ -20,7 +20,7 @@ from .config import AUDIO_DIR, TTS_ENABLED, TTS_VOICE
 
 
 logger = logging.getLogger(__name__)
-SYNTHESIS_TIMEOUT_SECONDS = 120
+SYNTHESIS_TIMEOUT_SECONDS = 300
 SYNTHESIS_ATTEMPTS = 3
 SYNTHESIS_RETRY_SECONDS = 2
 
@@ -47,6 +47,7 @@ def enqueue(book_id: str) -> None:
         return
 
     _ensure_worker()
+    database.update_book_status(book_id, "queued")
     _pending.put(book_id)
 
 

@@ -42,6 +42,19 @@ def test_upload_progress_and_delete(epub_path: Path) -> None:
         assert 0 <= payload["progress"] <= 100
         assert payload["resume"]["elapsed_seconds"] == 30
 
+        newer = client.post(
+            f"/api/books/{book_id}/progress",
+            json={"chapterIndex": 0, "elapsedSeconds": 45, "revision": 2},
+        )
+        stale = client.post(
+            f"/api/books/{book_id}/progress",
+            json={"chapterIndex": 0, "elapsedSeconds": 10, "revision": 1},
+        )
+        assert newer.status_code == 200
+        assert stale.status_code == 200
+        assert stale.json()["resume"]["elapsed_seconds"] == 45
+        assert stale.json()["resume"]["revision"] == 2
+
         missing_audio = client.get(f"/api/books/{book_id}/chapters/0/audio")
         assert missing_audio.status_code == 404
 
@@ -75,5 +88,16 @@ def test_upload_rejects_oversized_file(epub_path: Path, monkeypatch) -> None:
                 "/api/books",
                 files={"file": ("book.epub", handle, "application/epub+zip")},
             )
+
+    assert response.status_code == 413
+
+
+def test_upload_rejects_oversized_content_length() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/books",
+            content=b"",
+            headers={"content-length": str(300 * 1024 * 1024)},
+        )
 
     assert response.status_code == 413

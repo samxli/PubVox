@@ -15,7 +15,22 @@ from ebooklib import ITEM_DOCUMENT, epub
 
 
 WORDS_PER_MINUTE = 165
-BLOCK_TAGS = ("div", "p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "pre")
+BLOCK_TAGS = (
+    "div",
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "li",
+    "blockquote",
+    "pre",
+    "td",
+    "th",
+)
+BR_TOKEN = "\ue000"
 
 
 def parse_epub(file_path: Path) -> dict[str, object]:
@@ -70,36 +85,38 @@ def _extract_chapters(book: epub.EpubBook) -> list[dict[str, object]]:
 
 
 def _reading_order(book: epub.EpubBook) -> list[epub.EpubItem]:
-    """Return document items in spine order, falling back to manifest order."""
+    """Return linear document items in spine order, falling back to manifest order."""
     items: list[epub.EpubItem] = []
-    seen: set[str] = set()
 
-    for idref, _linear in book.spine:
-        item = book.get_item_with_id(idref)
-        if item is None or item.get_type() != ITEM_DOCUMENT or idref in seen:
+    for idref, linear in book.spine:
+        if str(linear).lower() == "no":
             continue
-        seen.add(idref)
+        item = book.get_item_with_id(idref)
+        if item is None or item.get_type() != ITEM_DOCUMENT:
+            continue
         items.append(item)
 
-    return items or list(book.get_items_of_type(ITEM_DOCUMENT))
+    if items or book.spine:
+        return items
+    return list(book.get_items_of_type(ITEM_DOCUMENT))
 
 
 def _extract_text(soup: BeautifulSoup) -> str:
     """Turn block-level HTML into paragraph-separated plain text."""
     for br in soup.find_all("br"):
-        br.replace_with("\n")
+        br.replace_with(BR_TOKEN)
     for tag in soup.find_all(BLOCK_TAGS):
         tag.insert_before("\n\n")
         tag.insert_after("\n\n")
 
-    return _clean_text(soup.get_text(" "))
+    return _clean_text(soup.get_text("")).replace(BR_TOKEN, "\n")
 
 
 def _chapter_title(soup: BeautifulSoup, fallback: str) -> str:
     """Prefer the first heading for a chapter title, then fall back to filename."""
     heading = soup.find(["h1", "h2", "h3"])
     if heading:
-        title = _clean_text(heading.get_text(" "))
+        title = _clean_text(heading.get_text(""))
         if title:
             return title
 

@@ -9,13 +9,13 @@
 - **📚 ePub to Audio:** Automatically parses your ePubs and generates high-quality audio on the fly using [Edge TTS][edge-tts].
 - **🚗 Commute-Ready (PWA):** Built as a Progressive Web App utilizing the Media Session API. Lock your screen, connect to your car's Bluetooth, and use native media controls to play, pause, and skip—just like Spotify or Audible.
 - **🔖 Progress Sync:** Pick up exactly where you left off. PubVox syncs your listening progress across all your devices.
-- **👥 Multi-User Support:** Individual accounts with isolated libraries and playback states.
+- **🏠 Single Shared Library:** Designed for one local user per instance, with no accounts or authentication in the current slice.
 - **⚡ Ultra-Lightweight:** Runs in a single Docker container with an SQLite database. Perfect for a 1GB VPS, a Raspberry Pi, or your local desktop.
 
 ## 🏗️ Architecture & Tech Stack
 
 - **Backend:** Python (FastAPI)
-- **Frontend:** Vanilla JavaScript / Alpine.js (Minimal PWA, served directly by the backend)
+- **Frontend:** Vanilla JavaScript / HTML5 / CSS (Minimal PWA, served directly by the backend)
 - **Database:** SQLite (No external DB containers required!)
 - **TTS Engine:** `edge-tts` (Asynchronous processing)
 - **Deployment:** Single-container Docker setup.
@@ -29,6 +29,7 @@ The easiest way to get PubVox running is via Docker Compose.
    ```yaml
    services:
      pubvox:
+       build: .
        image: samxli/pubvox:latest
        container_name: pubvox
        restart: unless-stopped
@@ -51,7 +52,7 @@ The easiest way to get PubVox running is via Docker Compose.
 
 3. Open your browser and navigate to `http://localhost:8000`.
 
-The compose file enables TTS by default. Set `PUBVOX_TTS_ENABLED=0` to disable it.
+The compose file enables TTS by default. Set `PUBVOX_TTS_ENABLED=0` to disable it. If you previously stored data in a local `./data` bind mount, copy that directory into the `pubvox-data` volume before switching.
 
 *(Note: For the PWA and Media Session API to work properly on mobile devices, PubVox must be served over HTTPS. We recommend putting it behind a reverse proxy like Caddy, Nginx Proxy Manager, or Traefik).*
 
@@ -63,19 +64,22 @@ PubVox can run as a Docker Space on CPU Basic hardware. A deploy script handles 
 
 - A [Hugging Face](https://huggingface.co) account
 - A write access token from [hf.co/settings/tokens](https://huggingface.co/settings/tokens)
-- `huggingface_hub` installed (`pip install huggingface_hub`)
+- A recent `huggingface_hub` installed (`pip install --upgrade huggingface_hub`; `Volume` support is required)
 
 ### Deploy
 
+Set the token in your environment so it does not land in shell history:
+
 ```shell
-python scripts/deploy_hf.py --repo-id <your-username>/pubvox --token <your-hf-token> --tts-enabled
+export HF_TOKEN=<your-hf-token>
+python scripts/deploy_hf.py --repo-id <your-username>/pubvox --private --tts-enabled
 ```
 
-Run with `--help` for the full list of options, including `--tts-voice`, `--private`, `--hardware`, and `--no-storage`.
+Spaces are public by default. Pass `--private` for personal libraries; this app has no authentication. Run with `--help` for the full list of options, including `--tts-voice`, `--hardware`, and `--no-storage`.
 
 ### Persistent Storage
 
-A storage bucket is automatically created and mounted at `/app/data` by the deploy script. No manual setup is needed unless you pass `--no-storage`.
+A private storage bucket is automatically created and mounted at `/app/data` by the deploy script. No manual setup is needed unless you pass `--no-storage`.
 
 ### Smoke Test
 

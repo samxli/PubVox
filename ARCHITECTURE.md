@@ -8,7 +8,7 @@ This project is an ultra-lightweight, open-source web application that converts 
 
 To prioritize simplicity and minimize the footprint, the system uses a **Monolithic Architecture** contained within a single Docker container. It avoids heavy message brokers and external database servers.
 
-- **Frontend:** A lightweight Progressive Web App (PWA) using Vanilla JavaScript / Alpine.js for playback and OS integration.
+- **Frontend:** A lightweight Progressive Web App (PWA) using Vanilla JavaScript / HTML5 / CSS for playback and OS integration.
 - **Backend:** A single Python web server handling APIs, ePub parsing, and asynchronous TTS generation.
 - **Database & Storage:** SQLite for relational data and local file storage for media.
 - **TTS Engine:** Edge TTS (Microsoft Edge Read Aloud API wrapper) to ensure it runs comfortably on low-resource environments.
@@ -19,7 +19,7 @@ To prioritize simplicity and minimize the footprint, the system uses a **Monolit
 
 ### 3.1. Frontend (Lightweight PWA)
 
-- **Tech Stack:** Vanilla JavaScript/HTML5 with Alpine.js, served directly by the backend to avoid complex build steps.
+- **Tech Stack:** Vanilla JavaScript/HTML5/CSS, served directly by the backend to avoid complex build steps.
 - **Audio Playback:** Standard HTML5 `<audio>` element. 
 - **Car & Screen-Off Support:** Integrates the **Media Session API**. This is the critical component that allows mobile operating systems (iOS/Android) and car Bluetooth systems to control playback (play, pause, skip) while the device screen is off.
 - **In-App Only:** No download buttons are exposed; the UI acts purely as a streaming player.
@@ -28,7 +28,7 @@ To prioritize simplicity and minimize the footprint, the system uses a **Monolit
 ### 3.2. Backend & TTS Processing (Python Monolith)
 
 - **Framework:** FastAPI (Python). Python is ideal for handling ePub extraction and TTS libraries.
-- **Authentication:** Simple session-based auth or lightweight JWT tokens.
+- **Authentication:** None in the current slice; a single seeded local user shares the library. Deploy privately.
 - **ePub Processing:**
   - Uploaded `.epub` files are parsed using libraries like `EbookLib` and `BeautifulSoup`.
   - Text is logically split into chapters.
@@ -39,8 +39,8 @@ To prioritize simplicity and minimize the footprint, the system uses a **Monolit
 ### 3.3. Database and Storage
 
 - **Database:** **SQLite**. A single `app.db` file stored on a persistent Docker volume.
-  - `Users` table: Basic credentials.
-  - `Books` table: Metadata (title, author) mapped to a user.
+  - `Users` table: The seeded local user.
+  - `Books` table: Metadata (title, author) mapped to that user.
   - `Progress` table: Current chapter and timestamp for seamless resume.
 - **File Storage:** Local filesystem storage (within a mounted Docker volume) for:
   - Uploaded raw ePub files.

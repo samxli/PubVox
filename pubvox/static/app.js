@@ -13,7 +13,7 @@ const state = {
   isWaitingForStateSeek: false,
   chapterSelectionSeq: 0,
   playbackRequestSeq: 0,
-  progressSeq: 0,
+  progressRevision: 0,
   pollTimer: null,
   syncTimer: null,
   initialLoadComplete: false,
@@ -22,6 +22,7 @@ const state = {
 
 const RESUME_CACHE_KEY = "pubvox.resumeCache";
 const RESUME_CACHE_MIN_ELAPSED_DELTA_SECONDS = 1;
+const PROGRESS_SYNC_TIMEOUT_MS = 10000;
 
 // Parsed cache payload held in memory while `state.books` is still loading.
 // Set by `restoreResumeCache()` on bootstrap, consulted by `render()` and
@@ -31,7 +32,8 @@ let cachedSnapshot = null;
 let bootstrapPlaybackStarted = false;
 let lastResumeCacheSnapshot = null;
 let cachedMetadataSeekHandler = null;
-let progressSyncChain = Promise.resolve();
+let progressSyncRunning = false;
+const pendingProgress = new Map();
 
 const dom = {
   audio: document.querySelector("#audio"),
@@ -91,6 +93,12 @@ async function responseErrorMessage(response) {
 async function loadBooks() {
   const elapsedAtFetchStart = state.elapsedSeconds;
   state.books = await api("/api/books");
+  for (const loadedBook of state.books) {
+    state.progressRevision = Math.max(
+      state.progressRevision,
+      Number(loadedBook.resume?.revision || 0),
+    );
+  }
 
   // If the user tapped play during the cache window, the audio element is
   // already committed to whatever source `restoreResumeCache()` preloaded.
@@ -614,7 +622,10 @@ async function deleteBook(book) {
 async function retryBook(book) {
   try {
     await api(`/api/books/${book.id}/tts`, { method: "POST" });
-    book.status = "queued";
+    const currentBook = state.books.find((item) => item.id === book.id);
+    if (currentBook) {
+      currentBook.status = "queued";
+    }
     showProcessing(book.title, 0, "Chapters queued for TTS.");
     render();
     updatePolling();
@@ -832,29 +843,65 @@ function syncProgress(payload = progressPayload()) {
     return Promise.resolve();
   }
 
-  const sequence = ++state.progressSeq;
-  progressSyncChain = progressSyncChain.catch(() => {}).then(async () => {
-    try {
-      const updated = await api(`/api/books/${payload.book.id}/progress`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload.body),
-      });
-      const book = activeBook();
-      if (
-        sequence === state.progressSeq
-        && book?.id === payload.book.id
-        && book.currentChapter === payload.body.chapterIndex
-      ) {
-        replaceBook(updated);
-        render();
-      }
-    } catch (error) {
-      console.warn("Unable to sync progress", error);
-    }
-  });
+  const revision = ++state.progressRevision;
+  const entry = {
+    bookId: payload.book.id,
+    revision,
+    payload: {
+      ...payload,
+      body: { ...payload.body, revision },
+    },
+    resolvers: [],
+  };
+  const queued = pendingProgress.get(entry.bookId);
+  if (queued) {
+    entry.resolvers = queued.resolvers;
+  }
 
-  return progressSyncChain;
+  const result = new Promise((resolve) => entry.resolvers.push(resolve));
+  pendingProgress.set(entry.bookId, entry);
+  flushProgress();
+  return result;
+}
+
+async function flushProgress() {
+  if (progressSyncRunning) {
+    return;
+  }
+
+  progressSyncRunning = true;
+  try {
+    while (pendingProgress.size) {
+      const [bookId, entry] = pendingProgress.entries().next().value;
+      pendingProgress.delete(bookId);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), PROGRESS_SYNC_TIMEOUT_MS);
+      try {
+        const updated = await api(`/api/books/${entry.bookId}/progress`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(entry.payload.body),
+          signal: controller.signal,
+        });
+        const book = activeBook();
+        if (
+          entry.revision === state.progressRevision
+          && book?.id === entry.bookId
+          && book.currentChapter === entry.payload.body.chapterIndex
+        ) {
+          replaceBook(updated);
+          render();
+        }
+      } catch (error) {
+        console.warn("Unable to sync progress", error);
+      } finally {
+        clearTimeout(timeout);
+        entry.resolvers.forEach((resolve) => resolve());
+      }
+    }
+  } finally {
+    progressSyncRunning = false;
+  }
 }
 
 function applyProgressPayload(payload) {
@@ -893,8 +940,17 @@ function syncProgressBeforeUnload() {
     return;
   }
 
+  const queued = pendingProgress.get(payload.book.id);
+  if (queued) {
+    pendingProgress.delete(payload.book.id);
+    queued.resolvers.forEach((resolve) => resolve());
+  }
+
   const url = `/api/books/${payload.book.id}/progress`;
-  const body = JSON.stringify(payload.body);
+  const body = JSON.stringify({
+    ...payload.body,
+    revision: ++state.progressRevision,
+  });
 
   if (navigator.sendBeacon) {
     const blob = new Blob([body], { type: "application/json" });

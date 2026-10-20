@@ -15,7 +15,7 @@ RUN groupadd --gid 1000 pubvox \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY --chown=pubvox:pubvox . .
+COPY . .
 
 EXPOSE 7860
 

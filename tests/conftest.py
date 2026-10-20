@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import tempfile
 
-os.environ["PUBVOX_DATA_DIR"] = tempfile.mkdtemp(prefix="pubvox-tests-")
+test_data_dir = tempfile.mkdtemp(prefix="pubvox-tests-")
+atexit.register(shutil.rmtree, test_data_dir, ignore_errors=True)
+os.environ["PUBVOX_DATA_DIR"] = test_data_dir
 os.environ.pop("PUBVOX_TTS_ENABLED", None)
 
 from pathlib import Path
@@ -29,7 +33,9 @@ def build_epub(path: Path) -> Path:
         "for extraction to keep it in the library.</p>"
         "<p>Second paragraph also has words so the parser should preserve both "
         "of them as separate paragraphs.</p>"
-        "<p>Inline<strong>tags</strong> need spacing.</p>"
+        "<p>Inline <strong>tags</strong> need spacing.</p>"
+        "<p>Line one<br>Line two.</p>"
+        "<p><span>T</span>his stays joined.</p>"
         "</body></html>"
     )
     second = epub.EpubHtml(title="Second", file_name="second.xhtml", lang="en")

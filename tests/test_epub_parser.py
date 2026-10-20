@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
-from pubvox.epub_parser import parse_epub
+from ebooklib import ITEM_DOCUMENT
+
+from pubvox.epub_parser import _reading_order, parse_epub
 
 
 def test_chapters_follow_spine_order(epub_path: Path) -> None:
@@ -18,5 +21,25 @@ def test_paragraphs_are_preserved(epub_path: Path) -> None:
     assert "First paragraph" in text
     assert "Second paragraph" in text
     assert "Inline tags need spacing." in text
+    assert "library.\n\nSecond paragraph" in text
+    assert "Line one\nLine two." in text
+    assert "This stays joined." in text
     assert text.index("First paragraph") < text.index("Second paragraph")
-    assert "\n\n" in text
+
+
+def test_reading_order_skips_non_linear_and_keeps_repeats() -> None:
+    chapter = SimpleNamespace(get_type=lambda: ITEM_DOCUMENT)
+    appendix = SimpleNamespace(get_type=lambda: ITEM_DOCUMENT)
+
+    class FakeBook:
+        spine = [("chapter", "yes"), ("appendix", "no"), ("chapter", "yes")]
+
+        @staticmethod
+        def get_item_with_id(idref: str):
+            return {"chapter": chapter, "appendix": appendix}[idref]
+
+        @staticmethod
+        def get_items_of_type(_item_type: str):
+            return [chapter, appendix]
+
+    assert _reading_order(FakeBook()) == [chapter, chapter]

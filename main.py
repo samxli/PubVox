@@ -54,16 +54,23 @@ async def limit_upload_size(request: Request, call_next):
     """Reject oversized upload bodies before multipart parsing spools them."""
     if request.method == "POST" and request.url.path == "/api/books":
         content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                too_large = int(content_length) > MAX_UPLOAD_BYTES + UPLOAD_REQUEST_OVERHEAD_BYTES
-            except ValueError:
-                too_large = False
-            if too_large:
-                return JSONResponse(
-                    {"detail": "ePub uploads are limited to 200 MB."},
-                    status_code=413,
-                )
+        if content_length is None:
+            return JSONResponse(
+                {"detail": "Content-Length header is required for uploads."},
+                status_code=411,
+            )
+        try:
+            too_large = int(content_length) > MAX_UPLOAD_BYTES + UPLOAD_REQUEST_OVERHEAD_BYTES
+        except ValueError:
+            return JSONResponse(
+                {"detail": "Invalid Content-Length header."},
+                status_code=400,
+            )
+        if too_large:
+            return JSONResponse(
+                {"detail": "ePub uploads are limited to 200 MB."},
+                status_code=413,
+            )
     return await call_next(request)
 
 
@@ -72,6 +79,7 @@ class ProgressUpdate(BaseModel):
 
     chapterIndex: int = Field(ge=0)
     elapsedSeconds: float = Field(ge=0)
+    revision: int = Field(default=0, ge=0)
 
 
 @app.get("/api/health")
@@ -98,8 +106,16 @@ def upload_book(file: UploadFile = File(...)) -> dict:
     destination = UPLOAD_DIR / f"{book_id}.epub"
 
     try:
+        total_bytes = 0
         with destination.open("wb") as output:
-            shutil.copyfileobj(file.file, output)
+            while chunk := file.file.read(1024 * 1024):
+                total_bytes += len(chunk)
+                if total_bytes > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="ePub uploads are limited to 200 MB.",
+                    )
+                output.write(chunk)
     except Exception:
         destination.unlink(missing_ok=True)
         raise
@@ -158,6 +174,7 @@ def save_progress(book_id: str, progress: ProgressUpdate) -> dict:
         book_id=book_id,
         chapter_index=progress.chapterIndex,
         elapsed_seconds=progress.elapsedSeconds,
+        revision=progress.revision,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Book or chapter not found.")

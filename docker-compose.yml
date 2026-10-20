@@ -1,5 +1,6 @@
 services:
   pubvox:
+    build: .
     image: samxli/pubvox:latest
     container_name: pubvox
     restart: unless-stopped

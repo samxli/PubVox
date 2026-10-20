@@ -16,11 +16,11 @@ Usage:
     python scripts/deploy_hf.py --repo-id username/pubvox --dry-run
 
 Prerequisites:
-    - pip install huggingface_hub
+    - pip install --upgrade huggingface_hub
     - A HF write token (export HF_TOKEN or pass --token)
 
-By default, a storage bucket is mounted at /app/data for persistence.
-Pass --no-storage to skip this step.
+By default, a private storage bucket is mounted at /app/data for persistence.
+Pass --no-storage to skip this step. Pass --private to make the Space itself private.
 """
 
 from __future__ import annotations
@@ -69,12 +69,24 @@ IGNORE_PATTERNS = [
     ".github",
     ".venv",
     ".venv/**",
+    ".env",
+    ".env.*",
+    ".pytest_cache",
+    ".pytest_cache/**",
     "__pycache__",
     "__pycache__/**",
     "*.pyc",
+    "*.pem",
+    "*.key",
     ".DS_Store",
     "scripts",
     "scripts/**",
+    "prototype",
+    "prototype/**",
+    "tests",
+    "tests/**",
+    "requirements-dev.txt",
+    "AGENTS.md",
     "data",
     "data/**",
     "*.db",
@@ -145,11 +157,12 @@ def parse_args() -> argparse.Namespace:
 
 def build_variables(tts_enabled: bool, tts_voice: str) -> dict[str, str]:
     """Merge default and optional variables into a single dict."""
-    variables = dict(DEFAULT_VARIABLES)
-    if tts_enabled:
-        variables["PUBVOX_TTS_ENABLED"] = "1"
-        if tts_voice:
-            variables["PUBVOX_TTS_VOICE"] = tts_voice
+    variables = {
+        **DEFAULT_VARIABLES,
+        "PUBVOX_TTS_ENABLED": "1" if tts_enabled else "0",
+    }
+    if tts_enabled and tts_voice:
+        variables["PUBVOX_TTS_VOICE"] = tts_voice
     return variables
 
 
@@ -224,8 +237,13 @@ def main() -> None:
         namespace = args.repo_id.split("/")[0]
         space_name = args.repo_id.split("/")[1]
         bucket_id = f"{namespace}/{space_name}-data"
-        print(f"Creating storage bucket '{bucket_id}'...")
-        api.create_bucket(bucket_id=bucket_id, exist_ok=True)
+        print(f"Creating private storage bucket '{bucket_id}'...")
+        api.create_bucket(bucket_id=bucket_id, private=True, exist_ok=True)
+        if not api.bucket_info(bucket_id=bucket_id).private:
+            raise SystemExit(
+                f"Storage bucket '{bucket_id}' is public. "
+                "Make it private in Hugging Face settings or delete it, then rerun."
+            )
         print("Mounting bucket at /app/data...")
         api.set_space_volumes(
             repo_id=args.repo_id,

@@ -5,7 +5,9 @@ from pathlib import Path
 import sys
 import types
 
-from pubvox import tts
+import pytest
+
+from pubvox import database, tts
 
 
 def test_process_book_marks_chapters_ready(client, epub_path: Path, monkeypatch) -> None:
@@ -49,6 +51,7 @@ def test_process_book_retries_failed_chapters(client, epub_path: Path, monkeypat
     failed = client.get(f"/api/books/{book_id}").json()
     assert failed["status"] == "failed"
     assert failed["chapters"][0]["status"] == "failed"
+    assert book_id not in database.recover_tts_queue()
 
     async def succeed(_text: str, output_path: Path) -> None:
         output_path.write_bytes(b"ID3")
@@ -59,6 +62,25 @@ def test_process_book_retries_failed_chapters(client, epub_path: Path, monkeypat
     ready = client.get(f"/api/books/{book_id}").json()
     assert ready["status"] == "ready"
     assert all(chapter["status"] == "ready" for chapter in ready["chapters"])
+
+
+def test_enqueue_marks_book_queued(client, epub_path: Path, monkeypatch) -> None:
+    with epub_path.open("rb") as handle:
+        uploaded = client.post(
+            "/api/books",
+            files={"file": ("book.epub", handle, "application/epub+zip")},
+        )
+    book_id = uploaded.json()["id"]
+    assert client.get(f"/api/books/{book_id}").json()["status"] == "unavailable"
+
+    queued: list[str] = []
+    monkeypatch.setattr(tts, "TTS_ENABLED", True)
+    monkeypatch.setattr(tts, "_ensure_worker", lambda: None)
+    monkeypatch.setattr(tts._pending, "put", queued.append)
+    tts.enqueue(book_id)
+
+    assert queued == [book_id]
+    assert client.get(f"/api/books/{book_id}").json()["status"] == "queued"
 
 
 def test_synthesize_retries_transient_errors(tmp_path: Path, monkeypatch) -> None:
@@ -85,3 +107,26 @@ def test_synthesize_retries_transient_errors(tmp_path: Path, monkeypatch) -> Non
 
     assert calls == 2
     assert output_path.read_bytes() == b"ID3"
+
+
+def test_synthesize_removes_partial_file_after_final_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FailingCommunicate:
+        def __init__(self, _text: str, _voice: str) -> None:
+            pass
+
+        async def save(self, path: str) -> None:
+            Path(path).write_bytes(b"partial")
+            raise RuntimeError("permanent failure")
+
+    fake_edge_tts = types.SimpleNamespace(Communicate=FailingCommunicate)
+    monkeypatch.setitem(sys.modules, "edge_tts", fake_edge_tts)
+    monkeypatch.setattr(tts, "SYNTHESIS_RETRY_SECONDS", 0)
+
+    output_path = tmp_path / "chapter.mp3"
+    with pytest.raises(RuntimeError, match="permanent failure"):
+        asyncio.run(tts._synthesize("chapter text", output_path))
+
+    assert not output_path.exists()
