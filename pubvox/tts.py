@@ -97,7 +97,7 @@ async def _process_book(book_id: str) -> None:
         database.update_chapter_status(book_id=book_id, position=position, status="processing")
 
         try:
-            await _synthesize(chapter["text"], output_path)
+            await _synthesize(book_id, chapter["text"], output_path)
         except Exception:
             logger.exception("TTS generation failed for book %s chapter %s", book_id, position)
             database.update_chapter_status(book_id=book_id, position=position, status="failed")
@@ -119,7 +119,7 @@ async def _process_book(book_id: str) -> None:
     database.update_book_status(book_id, "ready")
 
 
-async def _synthesize(text: str, output_path: Path) -> None:
+async def _synthesize(book_id: str, text: str, output_path: Path) -> None:
     """Send one chapter's text to Edge TTS and save the resulting MP3."""
     import edge_tts  # type: ignore[reportMissingImports]
 
@@ -132,7 +132,16 @@ async def _synthesize(text: str, output_path: Path) -> None:
             )
             return
         except Exception:
+            logger.warning(
+                "TTS attempt %d/%d failed for book %s",
+                attempt + 1,
+                SYNTHESIS_ATTEMPTS,
+                book_id,
+                exc_info=True,
+            )
             output_path.unlink(missing_ok=True)
+            if not database.book_exists(book_id):
+                return
             if attempt == SYNTHESIS_ATTEMPTS - 1:
                 raise
             await asyncio.sleep(SYNTHESIS_RETRY_SECONDS * (attempt + 1))

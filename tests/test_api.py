@@ -129,6 +129,19 @@ def test_recover_tts_queue_resets_only_processing_books(client, epub_path: Path)
     assert book_id not in database.recover_tts_queue()
 
 
+def test_recover_tts_queue_marks_unavailable_books_queued(client, epub_path: Path) -> None:
+    with epub_path.open("rb") as handle:
+        uploaded = client.post(
+            "/api/books",
+            files={"file": ("book.epub", handle, "application/epub+zip")},
+        )
+    book_id = uploaded.json()["id"]
+    assert uploaded.json()["status"] == "unavailable"
+
+    assert database.recover_tts_queue() == [book_id]
+    assert client.get(f"/api/books/{book_id}").json()["status"] == "queued"
+
+
 def test_progress_rejects_stale_saves_per_client(client, epub_path: Path) -> None:
     with epub_path.open("rb") as handle:
         uploaded = client.post(

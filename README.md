@@ -43,7 +43,7 @@ The repository includes a `docker-compose.yml` with TTS enabled and a persistent
 
 4. Upload an ePub. Chapters are queued immediately; audio becomes playable as each chapter finishes generating.
 
-The compose file enables TTS by default. Set `PUBVOX_TTS_ENABLED=0` to disable it. If you previously stored data in a local `./data` bind mount, copy that directory into the `pubvox-data` volume before switching.
+The compose file enables TTS by default. Disable it with `PUBVOX_TTS_ENABLED=0 docker compose up -d` (or an `.env` file). If you previously stored data in a local `./data` bind mount, copy that directory into the `pubvox-data` volume before switching.
 
 To run without Compose:
 
@@ -71,7 +71,7 @@ With TTS disabled, uploads are still parsed and stored, but no audio is generate
 
 ### Docker (recommended)
 
-Any VPS, home server, NAS, or desktop that runs Docker can host PubVox for free. Use the Compose setup above and put it behind an HTTPS reverse proxy for mobile playback. PubVox has no authentication, so keep it on your LAN or VPN, or add auth at the reverse proxy before exposing it to the internet.
+Any VPS, home server, NAS, or desktop that runs Docker can host PubVox for free. Use the Compose setup above and put it behind an HTTPS reverse proxy for mobile playback. PubVox has no authentication, so keep it on your LAN or VPN, or add auth at the reverse proxy before exposing it to the internet. The Compose file publishes the port on loopback only (`127.0.0.1:8000:7860`); to serve it on your LAN, change the mapping to `8000:7860` — ideally behind an authenticating reverse proxy.
 
 ### Hugging Face Spaces (optional, paid)
 

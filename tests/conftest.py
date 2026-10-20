@@ -17,6 +17,21 @@ from pathlib import Path
 import pytest
 from ebooklib import epub
 
+from pubvox import database
+
+
+@pytest.fixture(autouse=True)
+def fresh_storage():
+    """Give every test a clean database and storage directories."""
+    for name in ("app.db", "uploads", "audio"):
+        target = Path(test_data_dir) / name
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            target.unlink(missing_ok=True)
+    database.init_db()
+    yield
+
 
 def build_epub(path: Path) -> Path:
     """Write a small ePub whose manifest order differs from its spine order."""

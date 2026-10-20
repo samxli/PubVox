@@ -18,7 +18,7 @@ def test_process_book_marks_chapters_ready(client, epub_path: Path, monkeypatch)
         )
     book_id = uploaded.json()["id"]
 
-    async def fake_synthesize(_text: str, output_path: Path) -> None:
+    async def fake_synthesize(_book_id: str, _text: str, output_path: Path) -> None:
         output_path.write_bytes(b"ID3")
 
     monkeypatch.setattr(tts, "_synthesize", fake_synthesize)
@@ -42,7 +42,7 @@ def test_process_book_retries_failed_chapters(client, epub_path: Path, monkeypat
         )
     book_id = uploaded.json()["id"]
 
-    async def fail(_text: str, _output_path: Path) -> None:
+    async def fail(_book_id: str, _text: str, _output_path: Path) -> None:
         raise RuntimeError("transient failure")
 
     monkeypatch.setattr(tts, "_synthesize", fail)
@@ -53,7 +53,7 @@ def test_process_book_retries_failed_chapters(client, epub_path: Path, monkeypat
     assert failed["chapters"][0]["status"] == "failed"
     assert book_id not in database.recover_tts_queue()
 
-    async def succeed(_text: str, output_path: Path) -> None:
+    async def succeed(_book_id: str, _text: str, output_path: Path) -> None:
         output_path.write_bytes(b"ID3")
 
     monkeypatch.setattr(tts, "_synthesize", succeed)
@@ -138,9 +138,10 @@ def test_synthesize_retries_transient_errors(tmp_path: Path, monkeypatch) -> Non
     fake_edge_tts = types.SimpleNamespace(Communicate=FakeCommunicate)
     monkeypatch.setitem(sys.modules, "edge_tts", fake_edge_tts)
     monkeypatch.setattr(tts, "SYNTHESIS_RETRY_SECONDS", 0)
+    monkeypatch.setattr(tts.database, "book_exists", lambda _book_id: True)
 
     output_path = tmp_path / "chapter.mp3"
-    asyncio.run(tts._synthesize("chapter text", output_path))
+    asyncio.run(tts._synthesize("book", "chapter text", output_path))
 
     assert calls == 2
     assert output_path.read_bytes() == b"ID3"
@@ -161,9 +162,38 @@ def test_synthesize_removes_partial_file_after_final_failure(
     fake_edge_tts = types.SimpleNamespace(Communicate=FailingCommunicate)
     monkeypatch.setitem(sys.modules, "edge_tts", fake_edge_tts)
     monkeypatch.setattr(tts, "SYNTHESIS_RETRY_SECONDS", 0)
+    monkeypatch.setattr(tts.database, "book_exists", lambda _book_id: True)
 
     output_path = tmp_path / "chapter.mp3"
     with pytest.raises(RuntimeError, match="permanent failure"):
-        asyncio.run(tts._synthesize("chapter text", output_path))
+        asyncio.run(tts._synthesize("book", "chapter text", output_path))
 
+    assert not output_path.exists()
+
+
+def test_synthesize_stops_retrying_when_book_deleted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    class FailingCommunicate:
+        def __init__(self, _text: str, _voice: str) -> None:
+            pass
+
+        async def save(self, path: str) -> None:
+            nonlocal calls
+            calls += 1
+            Path(path).write_bytes(b"partial")
+            raise RuntimeError("transient failure")
+
+    fake_edge_tts = types.SimpleNamespace(Communicate=FailingCommunicate)
+    monkeypatch.setitem(sys.modules, "edge_tts", fake_edge_tts)
+    monkeypatch.setattr(tts, "SYNTHESIS_RETRY_SECONDS", 0)
+    monkeypatch.setattr(tts.database, "book_exists", lambda _book_id: False)
+
+    output_path = tmp_path / "chapter.mp3"
+    asyncio.run(tts._synthesize("book", "chapter text", output_path))
+
+    assert calls == 1
     assert not output_path.exists()

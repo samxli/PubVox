@@ -300,19 +300,24 @@ def recover_tts_queue() -> list[str]:
             """,
             (now,),
         )
+        connection.execute(
+            """
+            UPDATE books
+            SET status = 'queued', updated_at = ?
+            WHERE status = 'unavailable'
+              AND EXISTS (
+                    SELECT 1 FROM chapters
+                    WHERE chapters.book_id = books.id
+                      AND chapters.status = 'queued'
+              )
+            """,
+            (now,),
+        )
         rows = connection.execute(
             """
             SELECT id
             FROM books
             WHERE status = 'queued'
-               OR (
-                   status = 'unavailable'
-                   AND EXISTS (
-                       SELECT 1 FROM chapters
-                       WHERE chapters.book_id = books.id
-                         AND chapters.status = 'queued'
-                   )
-               )
             ORDER BY created_at ASC
             """
         ).fetchall()
