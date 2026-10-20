@@ -11,18 +11,19 @@ from contextlib import asynccontextmanager
 import json
 import logging
 import re
+import secrets
 from pathlib import Path
 import shutil
 from typing import Any
 import uuid
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from pubvox import database, tts
-from pubvox.config import AUDIO_DIR, STATIC_DIR, TTS_ENABLED, UPLOAD_DIR
+from pubvox.config import AUDIO_DIR, PASSWORD, STATIC_DIR, TTS_ENABLED, UPLOAD_DIR
 from pubvox.epub_parser import parse_epub
 
 
@@ -123,6 +124,42 @@ class UploadSizeLimitMiddleware:
 app = FastAPI(title="PubVox", version="0.1.0", lifespan=lifespan)
 app.add_middleware(UploadSizeLimitMiddleware)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+SESSION_COOKIE = "pubvox_session"
+AUTH_EXEMPT_PATHS = {"/api/login", "/api/health"}
+# shortcut: sessions live in-process only, so a restart forces re-login; fine for single-user self-hosting
+session_tokens: set[str] = set()
+
+
+@app.middleware("http")
+async def require_auth(request: Any, call_next: Any) -> Any:
+    """Reject API requests without a valid session when a password is configured."""
+    if (
+        PASSWORD
+        and request.url.path.startswith("/api/")
+        and request.url.path not in AUTH_EXEMPT_PATHS
+        and request.cookies.get(SESSION_COOKIE) not in session_tokens
+    ):
+        return JSONResponse({"detail": "Unauthorized."}, status_code=401)
+    return await call_next(request)
+
+
+class LoginRequest(BaseModel):
+    """Password payload for unlocking the API."""
+
+    password: str
+
+
+@app.post("/api/login")
+def login(body: LoginRequest, response: Response) -> dict[str, bool]:
+    """Exchange the configured password for an httponly session cookie."""
+    if not PASSWORD or not secrets.compare_digest(body.password, PASSWORD):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    token = secrets.token_urlsafe(32)
+    session_tokens.add(token)
+    response.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="lax")
+    return {"ok": True}
 
 
 class ProgressUpdate(BaseModel):

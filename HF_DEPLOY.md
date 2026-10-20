@@ -41,7 +41,7 @@ export HF_TOKEN=<your-hf-token>
 python scripts/deploy_hf.py --repo-id <your-username>/pubvox --private --tts-enabled
 ```
 
-New Spaces are public by default. Pass `--private` for a personal library; PubVox has no authentication, so a public Space exposes your uploaded books and generated audio to anyone who can reach the URL. Rerunning the script without `--private` leaves an existing Space's visibility unchanged, so an already-private Space stays private.
+New Spaces are public by default. Pass `--private` for a personal library. Also set a `PUBVOX_PASSWORD` Space secret (see [Security notes](#security-notes)) — without it a public Space exposes your uploaded books and generated audio to anyone who can reach the URL. Rerunning the script without `--private` leaves an existing Space's visibility unchanged, so an already-private Space stays private.
 
 Useful flags:
 
@@ -88,6 +88,6 @@ If the bucket already exists and is public, the script stops with an error. Make
 
 See [SECURITY.md](SECURITY.md) for the general policy. For Spaces specifically:
 
-- PubVox serves a single shared library with no authentication. Keep the Space private unless you intend to publish your library.
+- PubVox serves a single shared library. Set a `PUBVOX_PASSWORD` Space secret to require a password, and keep the Space private unless you intend to publish your library.
 - Keep the storage bucket private; it contains the SQLite database and your ePub files.
 - Store any future credentials as Space secrets, not as committed files or public variables.

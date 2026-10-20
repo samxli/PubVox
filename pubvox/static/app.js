@@ -96,13 +96,25 @@ const dom = {
   processingPercent: document.querySelector("#processing-percent"),
   processingBar: document.querySelector("#processing-bar"),
   processingStep: document.querySelector("#processing-step"),
+  authOverlay: document.querySelector("#auth-overlay"),
+  authForm: document.querySelector("#auth-form"),
+  authPassword: document.querySelector("#auth-password"),
+  authError: document.querySelector("#auth-error"),
 };
+
+function showAuthOverlay() {
+  dom.authOverlay.classList.remove("hidden");
+  dom.authPassword.focus();
+}
 
 /** Fetch JSON from the backend and normalize API errors for the UI. */
 async function api(path, options = {}) {
   const response = await fetch(path, options);
 
   if (!response.ok) {
+    if (response.status === 401) {
+      showAuthOverlay();
+    }
     throw new Error(await responseErrorMessage(response));
   }
 
@@ -1190,6 +1202,30 @@ state.syncTimer = setInterval(() => {
     syncProgress();
   }
 }, 5000);
+
+dom.authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  dom.authError.classList.add("hidden");
+  try {
+    // Plain fetch, not api(): a failed login is also a 401 and must not re-open the overlay.
+    const response = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: dom.authPassword.value }),
+    });
+    if (!response.ok) {
+      dom.authError.textContent = "Wrong password.";
+      dom.authError.classList.remove("hidden");
+      return;
+    }
+    dom.authOverlay.classList.add("hidden");
+    dom.authPassword.value = "";
+    loadBooks().catch(() => {});
+  } catch {
+    dom.authError.textContent = "Unable to reach the server.";
+    dom.authError.classList.remove("hidden");
+  }
+});
 
 restoreResumeCache();
 loadBooks().catch((error) => {
