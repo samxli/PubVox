@@ -154,6 +154,22 @@ def test_progress_rejects_stale_saves_per_client(client, epub_path: Path) -> Non
     assert save("a", 11, 40)["resume"]["elapsed_seconds"] == 40
 
 
+def test_progress_rejects_revision_above_sqlite_range(client, epub_path: Path) -> None:
+    with epub_path.open("rb") as handle:
+        uploaded = client.post(
+            "/api/books",
+            files={"file": ("book.epub", handle, "application/epub+zip")},
+        )
+    book_id = uploaded.json()["id"]
+
+    response = client.post(
+        f"/api/books/{book_id}/progress",
+        json={"chapterIndex": 0, "elapsedSeconds": 1, "revision": 2**63},
+    )
+
+    assert response.status_code == 422
+
+
 def test_recover_tts_queue_includes_unavailable_books(client, epub_path: Path) -> None:
     with epub_path.open("rb") as handle:
         uploaded = client.post(

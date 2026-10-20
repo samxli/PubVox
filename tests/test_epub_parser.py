@@ -3,9 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from bs4 import BeautifulSoup
 from ebooklib import ITEM_DOCUMENT
 
-from pubvox.epub_parser import _reading_order, parse_epub
+from pubvox.epub_parser import (
+    BR_TOKEN,
+    _chapter_title,
+    _extract_text,
+    _reading_order,
+    parse_epub,
+)
 
 
 def test_chapters_follow_spine_order(epub_path: Path) -> None:
@@ -43,3 +50,22 @@ def test_reading_order_skips_non_linear_and_keeps_repeats() -> None:
             return [chapter, appendix]
 
     assert _reading_order(FakeBook()) == [chapter, chapter]
+
+
+def test_chapter_title_replaces_br_with_space() -> None:
+    soup = BeautifulSoup("<h1>Chapter<br>One</h1>", "html.parser")
+
+    title = _chapter_title(soup, "fallback.xhtml")
+
+    assert title == "Chapter One"
+    assert BR_TOKEN not in title
+
+
+def test_chapter_title_ignores_extracted_body_tokens() -> None:
+    soup = BeautifulSoup("<h1>Chapter<br>One</h1><p>Body text.</p>", "html.parser")
+    _extract_text(soup)
+
+    title = _chapter_title(soup, "fallback.xhtml")
+
+    assert title == "Chapter One"
+    assert BR_TOKEN not in title

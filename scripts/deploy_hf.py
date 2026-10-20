@@ -289,7 +289,7 @@ def main() -> None:
                 shutil.copytree(
                     source,
                     target,
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"),
                     symlinks=False,
                 )
             else:

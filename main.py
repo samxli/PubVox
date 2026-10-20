@@ -130,7 +130,7 @@ class ProgressUpdate(BaseModel):
 
     chapterIndex: int = Field(ge=0)
     elapsedSeconds: float = Field(ge=0)
-    revision: int = Field(default=0, ge=0)
+    revision: int = Field(default=0, ge=0, le=2**63 - 1)
     clientId: str = Field(default="", max_length=64)
 
 

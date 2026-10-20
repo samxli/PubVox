@@ -4,6 +4,8 @@
  * The frontend keeps only transient playback state locally. Book/chapter data,
  * upload processing, and progress persistence flow through the FastAPI JSON API.
  */
+const PROGRESS_REVISION_KEY = "pubvox.progressRevision";
+
 const state = {
   books: [],
   activeBookId: localStorage.getItem("pubvox.activeBookId"),
@@ -14,7 +16,7 @@ const state = {
   isWaitingForStateSeek: false,
   chapterSelectionSeq: 0,
   playbackRequestSeq: 0,
-  progressRevision: 0,
+  progressRevision: getStoredRevision(),
   pollTimer: null,
   syncTimer: null,
   initialLoadComplete: false,
@@ -38,6 +40,23 @@ function getClientId() {
     return generated;
   } catch {
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+}
+
+function getStoredRevision() {
+  try {
+    const stored = Number(sessionStorage.getItem(PROGRESS_REVISION_KEY));
+    return Number.isFinite(stored) && stored > 0 ? stored : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function storeRevision(revision) {
+  try {
+    sessionStorage.setItem(PROGRESS_REVISION_KEY, String(revision));
+  } catch {
+    // Storage can be unavailable; the in-memory counter still advances.
   }
 }
 
@@ -861,6 +880,7 @@ function syncProgress(payload = progressPayload()) {
   }
 
   const revision = ++state.progressRevision;
+  storeRevision(revision);
   const entry = {
     bookId: payload.book.id,
     revision,
@@ -965,9 +985,11 @@ function syncProgressBeforeUnload() {
   }
 
   const url = `/api/books/${payload.book.id}/progress`;
+  const revision = ++state.progressRevision;
+  storeRevision(revision);
   const body = JSON.stringify({
     ...payload.body,
-    revision: ++state.progressRevision,
+    revision,
   });
 
   if (navigator.sendBeacon) {

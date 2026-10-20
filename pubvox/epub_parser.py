@@ -66,12 +66,13 @@ def _extract_chapters(book: epub.EpubBook) -> list[dict[str, object]]:
         for tag in soup(["script", "style", "nav", "head"]):
             tag.decompose()
 
+        title = _chapter_title(soup, item.get_name())
         text = _extract_text(soup)
         if not text:
             continue
 
         chapter = {
-            "title": _chapter_title(soup, item.get_name()),
+            "title": title,
             "text": text,
             "duration_seconds": _estimate_duration_seconds(text),
         }
@@ -116,7 +117,9 @@ def _chapter_title(soup: BeautifulSoup, fallback: str) -> str:
     """Prefer the first heading for a chapter title, then fall back to filename."""
     heading = soup.find(["h1", "h2", "h3"])
     if heading:
-        title = _clean_text(heading.get_text(""))
+        for br in heading.find_all("br"):
+            br.replace_with(" ")
+        title = _clean_text(heading.get_text("").replace(BR_TOKEN, " "))
         if title:
             return title
 
