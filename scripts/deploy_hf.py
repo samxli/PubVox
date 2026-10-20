@@ -21,6 +21,12 @@ Prerequisites:
 
 By default, a private storage bucket is mounted at /app/data for persistence.
 Pass --no-storage to skip this step. Pass --private to make the Space itself private.
+
+Note:
+    Hugging Face requires a paid plan to create Docker Spaces (PRO for personal
+    accounts, Team or Enterprise for organizations). CPU Basic hardware has no
+    hourly charge, but storage buckets are billed per TB. Self-hosting with
+    Docker is the free option; see HF_DEPLOY.md for details.
 """
 
 from __future__ import annotations
@@ -63,7 +69,16 @@ DEFAULT_VARIABLES: dict[str, str] = {
     "PUBVOX_DATA_DIR": "/app/data",
 }
 
-DEPLOY_PATHS = ("main.py", "pubvox", "requirements.txt", "Dockerfile")
+DEPLOY_PATHS = (
+    "main.py",
+    "pubvox",
+    "requirements.txt",
+    "Dockerfile",
+    "ARCHITECTURE.md",
+    "HF_DEPLOY.md",
+    "SECURITY.md",
+    "LICENSE",
+)
 
 
 def _validate_repo_id(value: str) -> str:
@@ -152,6 +167,15 @@ def build_readme_content() -> str:
     return HF_README_FRONTMATTER + original
 
 
+def is_payment_required(exc: Exception) -> bool:
+    """Detect the paid-plan / billing rejection from a Hub API call."""
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) == 402:
+        return True
+    message = str(exc).lower()
+    return "payment" in message or "paid plan" in message
+
+
 def check_auth(api: HfApi) -> None:
     """Verify the token is valid before attempting any operations."""
     try:
@@ -190,13 +214,23 @@ def main() -> None:
 
     # Create the Space (no-op if it already exists)
     print("Creating Space (if it doesn't exist)...")
-    api.create_repo(
-        repo_id=args.repo_id,
-        repo_type="space",
-        space_sdk="docker",
-        private=args.private,
-        exist_ok=True,
-    )
+    try:
+        api.create_repo(
+            repo_id=args.repo_id,
+            repo_type="space",
+            space_sdk="docker",
+            private=args.private,
+            exist_ok=True,
+        )
+    except Exception as exc:
+        if is_payment_required(exc):
+            raise SystemExit(
+                "Hugging Face requires a paid plan to create Docker Spaces.\n"
+                "  Upgrade to PRO (personal) or Team/Enterprise (organizations), "
+                "or self-host with Docker instead.\n"
+                "  Details: HF_DEPLOY.md"
+            ) from exc
+        raise
     # Always enforce the visibility setting (create_repo is a no-op when the
     # Space already exists, so --private would otherwise be silently ignored).
     api.update_repo_settings(

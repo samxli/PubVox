@@ -59,5 +59,5 @@ To prioritize simplicity and minimize the footprint, the system uses a **Monolit
 - **Dockerized (Single Container):** The application runtime (frontend assets and Python server) is packaged into a single `Dockerfile`.
 - **Volumes:** A single mapped volume (e.g., `/app/data`) stores the SQLite database and media files, ensuring data persists across container restarts.
 - **Reverse Proxy:** Expected to be placed behind a simple reverse proxy (like Caddy or Nginx) for automatic HTTPS, which is required for PWAs and the Media Session API.
-- **Hugging Face Spaces:** The same Dockerfile can be deployed as a Docker Space via `scripts/deploy_hf.py`. The script handles Space creation, environment variable configuration, and uploads with the required HF metadata. Persistent storage is needed to retain data across Space sleeps and restarts.
+- **Hugging Face Spaces (optional, paid):** The same Dockerfile can be deployed as a Docker Space via `scripts/deploy_hf.py`. The script handles Space creation, environment variable configuration, and uploads with the required HF metadata. Docker Spaces require a paid Hugging Face plan, and persistent storage is needed to retain data across Space sleeps and restarts. See [HF_DEPLOY.md](HF_DEPLOY.md).
 
