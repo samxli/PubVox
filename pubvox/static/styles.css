@@ -244,7 +244,14 @@ p {
   appearance: none;
 }
 
-.delete-book-button {
+.book-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.delete-book-button,
+.retry-book-button {
   flex: none;
   border: 1px solid rgba(255, 143, 143, 0.24);
   border-radius: 999px;
@@ -258,6 +265,16 @@ p {
 
 .delete-book-button:hover {
   background: rgba(255, 143, 143, 0.18);
+}
+
+.retry-book-button {
+  border-color: rgba(126, 230, 168, 0.24);
+  background: rgba(126, 230, 168, 0.1);
+  color: var(--accent);
+}
+
+.retry-book-button:hover {
+  background: rgba(126, 230, 168, 0.18);
 }
 
 .book-cover,
@@ -296,6 +313,11 @@ p {
 .status-pill.failed {
   background: rgba(255, 143, 143, 0.12);
   color: var(--danger);
+}
+
+.status-pill.unavailable {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
 }
 
 .upload-dropzone {

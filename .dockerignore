@@ -4,5 +4,13 @@
 __pycache__
 *.pyc
 .DS_Store
+.env
+.env.*
+.pytest_cache
+*.pem
+*.key
 data
 *.db
+prototype
+tests
+requirements-dev.txt

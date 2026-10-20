@@ -1,0 +1,14 @@
+services:
+  pubvox:
+    image: samxli/pubvox:latest
+    container_name: pubvox
+    restart: unless-stopped
+    ports:
+      - "8000:7860"
+    environment:
+      PUBVOX_TTS_ENABLED: "1"
+    volumes:
+      - pubvox-data:/app/data
+
+volumes:
+  pubvox-data:

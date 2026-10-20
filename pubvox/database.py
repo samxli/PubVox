@@ -33,6 +33,8 @@ def connect() -> Iterable[sqlite3.Connection]:
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute("PRAGMA journal_mode = WAL")
     try:
         yield connection
         connection.commit()
@@ -226,6 +228,57 @@ def queued_chapters(book_id: str) -> list[dict[str, Any]]:
         return [dict(row) for row in rows]
 
 
+def mark_audio_unavailable() -> None:
+    """Mark books that cannot be synthesized because TTS is disabled."""
+    with connect() as connection:
+        connection.execute(
+            "UPDATE books SET status = 'unavailable' WHERE status IN ('queued', 'processing')"
+        )
+
+
+def mark_book_failed(book_id: str) -> None:
+    """Mark a book failed and release any chapters stuck in processing."""
+    now = utc_now()
+    with connect() as connection:
+        connection.execute(
+            """
+            UPDATE chapters
+            SET status = 'failed', updated_at = ?
+            WHERE book_id = ? AND status = 'processing'
+            """,
+            (now, book_id),
+        )
+        connection.execute(
+            "UPDATE books SET status = 'failed', updated_at = ? WHERE id = ?",
+            (now, book_id),
+        )
+
+
+def recover_tts_queue() -> list[str]:
+    """Reset interrupted jobs and return books that still need audio."""
+    with connect() as connection:
+        connection.execute(
+            "UPDATE chapters SET status = 'queued' WHERE status = 'processing'"
+        )
+        connection.execute(
+            "UPDATE books SET status = 'queued' WHERE status = 'processing'"
+        )
+        rows = connection.execute(
+            """
+            SELECT DISTINCT books.id
+            FROM books
+            WHERE books.status IN ('queued', 'processing')
+               OR EXISTS (
+                   SELECT 1 FROM chapters
+                   WHERE chapters.book_id = books.id
+                     AND chapters.status IN ('queued', 'failed')
+               )
+            ORDER BY books.created_at ASC
+            """
+        ).fetchall()
+        return [str(row["id"]) for row in rows]
+
+
 def update_book_status(book_id: str, status: str) -> None:
     """Move a book through queued, processing, ready, or failed states."""
     with connect() as connection:
@@ -263,14 +316,37 @@ def update_progress(
     book_id: str,
     chapter_index: int,
     elapsed_seconds: float,
-    progress_percent: int,
 ) -> dict[str, Any] | None:
-    """Persist resume state and denormalized whole-book progress."""
+    """Persist resume state and compute whole-book progress on the server."""
     now = utc_now()
     with connect() as connection:
         row = _book_row(connection, book_id)
         if not row:
             return None
+
+        chapters = connection.execute(
+            """
+            SELECT position, duration_seconds
+            FROM chapters
+            WHERE book_id = ?
+            ORDER BY position ASC
+            """,
+            (book_id,),
+        ).fetchall()
+        chapter = next((item for item in chapters if item["position"] == chapter_index), None)
+        if chapter is None:
+            return None
+
+        total_duration = sum(item["duration_seconds"] for item in chapters)
+        completed_duration = sum(
+            item["duration_seconds"] for item in chapters if item["position"] < chapter_index
+        )
+        progress_percent = 0
+        if total_duration:
+            progress_percent = round(
+                min(1.0, (completed_duration + max(0.0, elapsed_seconds)) / total_duration) * 100
+            )
+        progress_percent = max(0, min(100, progress_percent))
 
         connection.execute(
             """

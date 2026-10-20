@@ -189,7 +189,8 @@ def main() -> None:
 
     print(f"Repository:  {args.repo_id}")
     print(f"Hardware:    {args.hardware}")
-    print(f"Storage:     {("skipped" if args.no_storage else "/app/data (bucket)")}")
+    storage = "skipped" if args.no_storage else "/app/data (bucket)"
+    print(f"Storage:     {storage}")
     print(f"Private:     {args.private}")
     print(f"Variables:   {variables}")
     print()
@@ -197,7 +198,7 @@ def main() -> None:
     if args.dry_run:
         print("[dry-run] Would create/update the Space and upload files.")
         print(f"[dry-run] README would have {len(HF_README_FRONTMATTER.splitlines())} lines of frontmatter prepended.")
-        print(f"[dry-run] Upload dir (copy of project with patched README): <tempdir>")
+        print("[dry-run] Upload dir (copy of project with patched README): <tempdir>")
         print(f"[dry-run] Ignore patterns: {IGNORE_PATTERNS}")
         return
 
@@ -225,7 +226,7 @@ def main() -> None:
         bucket_id = f"{namespace}/{space_name}-data"
         print(f"Creating storage bucket '{bucket_id}'...")
         api.create_bucket(bucket_id=bucket_id, exist_ok=True)
-        print(f"Mounting bucket at /app/data...")
+        print("Mounting bucket at /app/data...")
         api.set_space_volumes(
             repo_id=args.repo_id,
             volumes=[

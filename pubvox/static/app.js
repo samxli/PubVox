@@ -13,6 +13,7 @@ const state = {
   isWaitingForStateSeek: false,
   chapterSelectionSeq: 0,
   playbackRequestSeq: 0,
+  progressSeq: 0,
   pollTimer: null,
   syncTimer: null,
   initialLoadComplete: false,
@@ -30,6 +31,7 @@ let cachedSnapshot = null;
 let bootstrapPlaybackStarted = false;
 let lastResumeCacheSnapshot = null;
 let cachedMetadataSeekHandler = null;
+let progressSyncChain = Promise.resolve();
 
 const dom = {
   audio: document.querySelector("#audio"),
@@ -180,6 +182,24 @@ function render() {
     return;
   }
 
+  renderPlayer();
+  renderBooks(book);
+  renderChapters(book);
+  updateMediaSession(book, chapter);
+}
+
+/** Repaint only the player chrome; safe to call on every timeupdate. */
+function renderPlayer() {
+  const book = activeBook();
+  const chapter = currentChapter(book);
+
+  if (!book || !chapter) {
+    if (state.books.length === 0 && cachedSnapshot) {
+      paintCachedPlayer();
+    }
+    return;
+  }
+
   const chapterLabel = `Chapter ${chapter.position + 1} - ${chapter.title}`;
   const progress = Math.max(0, Math.min(100, book.progress || 0));
   const duration = playbackDuration(chapter);
@@ -201,10 +221,6 @@ function render() {
   setSeekControlsEnabled(Boolean(chapter.audioUrl));
   dom.playToggle.classList.toggle("is-playing", state.isPlaying);
   dom.playToggle.setAttribute("aria-label", state.isPlaying ? "Pause" : "Play");
-
-  renderBooks(book);
-  renderChapters(book);
-  updateMediaSession(book, chapter);
   saveResumeCache(book, chapter);
 }
 
@@ -344,7 +360,7 @@ function restoreResumeCache() {
     }
 
     if (stateChanged) {
-      render();
+      renderPlayer();
     }
   };
 
@@ -455,12 +471,28 @@ function renderBooks(active) {
     const status = document.createElement("span");
     status.className = "book-status";
     const pill = document.createElement("span");
-    pill.className = `status-pill${book.status === "failed" ? " failed" : ""}`;
+    pill.className = "status-pill";
+    if (book.status === "failed" || book.status === "unavailable") {
+      pill.classList.add(book.status);
+    }
     pill.textContent = statusLabel(book.status);
     const progress = document.createElement("span");
     progress.className = "muted";
     progress.textContent = `${book.progress || 0}% done`;
     status.append(pill, progress);
+
+    const actions = document.createElement("span");
+    actions.className = "book-actions";
+
+    if (book.status === "failed") {
+      const retryButton = document.createElement("button");
+      retryButton.type = "button";
+      retryButton.className = "retry-book-button";
+      retryButton.setAttribute("aria-label", `Retry audio generation for ${book.title}`);
+      retryButton.textContent = "Retry";
+      retryButton.addEventListener("click", () => retryBook(book));
+      actions.append(retryButton);
+    }
 
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
@@ -468,9 +500,10 @@ function renderBooks(active) {
     deleteButton.setAttribute("aria-label", `Delete ${book.title}`);
     deleteButton.textContent = "Delete";
     deleteButton.addEventListener("click", () => deleteBook(book));
+    actions.append(deleteButton);
 
     selectButton.append(cover, details, status);
-    card.append(selectButton, deleteButton);
+    card.append(selectButton, actions);
     return card;
   });
 
@@ -487,7 +520,11 @@ function renderChapters(book) {
     title.textContent = `Chapter ${chapter.position + 1}: ${chapter.title}`;
     const status = document.createElement("span");
     status.className = "muted";
-    status.textContent = chapter.audioUrl ? "Audio ready" : statusLabel(chapter.status);
+    status.textContent = chapter.audioUrl
+      ? "Audio ready"
+      : book.status === "unavailable"
+        ? "Audio unavailable"
+        : statusLabel(chapter.status);
     details.append(title, status);
 
     const duration = document.createElement("span");
@@ -574,6 +611,18 @@ async function deleteBook(book) {
   }
 }
 
+async function retryBook(book) {
+  try {
+    await api(`/api/books/${book.id}/tts`, { method: "POST" });
+    book.status = "queued";
+    showProcessing(book.title, 0, "Chapters queued for TTS.");
+    render();
+    updatePolling();
+  } catch (error) {
+    showProcessing(book.title, 100, error.message);
+  }
+}
+
 async function selectChapter(position) {
   const sequence = ++state.chapterSelectionSeq;
   const book = activeBook();
@@ -617,13 +666,13 @@ async function setPlaying(isPlaying) {
   // `currentChapter()` is still null pending `loadBooks()`.
   if (isPlaying && !activePlaybackTarget()) {
     state.isPlaying = false;
-    render();
+    renderPlayer();
     return;
   }
 
   if (isPlaying) {
     state.isPlaying = true;
-    render();
+    renderPlayer();
 
     try {
       await waitForAudioMetadata();
@@ -639,13 +688,13 @@ async function setPlaying(isPlaying) {
       }
 
       state.isPlaying = false;
-      render();
+      renderPlayer();
       showProcessing("Playback", 100, error.message);
     }
   } else {
     dom.audio.pause();
     state.isPlaying = false;
-    render();
+    renderPlayer();
   }
 }
 
@@ -695,7 +744,7 @@ function skip(seconds) {
     dom.audio.currentTime = nextTime;
   }
 
-  render();
+  renderPlayer();
   syncProgress();
 }
 
@@ -709,7 +758,7 @@ async function advanceToNextChapter(shouldResume) {
   const nextChapter = book.chapters[chapter.position + 1];
   if (!nextChapter) {
     state.elapsedSeconds = playbackDuration(chapter);
-    render();
+    renderPlayer();
     await syncProgress();
     await setPlaying(false);
     return;
@@ -746,7 +795,7 @@ function seekAudioToState() {
 
   if (Math.abs(dom.audio.currentTime - target) < 0.5) {
     if (stateChanged) {
-      render();
+      renderPlayer();
     }
     return;
   }
@@ -756,7 +805,7 @@ function seekAudioToState() {
   state.isSeekingFromState = false;
 
   if (stateChanged) {
-    render();
+    renderPlayer();
   }
 }
 
@@ -778,27 +827,43 @@ function progressPercent(book, chapter, elapsedSeconds) {
 }
 
 /** Persist the current chapter and elapsed time for cross-device resume. */
-async function syncProgress(payload = progressPayload()) {
+function syncProgress(payload = progressPayload()) {
   if (!payload) {
-    return;
+    return Promise.resolve();
   }
 
-  try {
-    const updated = await api(`/api/books/${payload.book.id}/progress`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload.body),
-    });
-    replaceBook(updated);
-    render();
-  } catch (error) {
-    console.warn("Unable to sync progress", error);
-  }
+  const sequence = ++state.progressSeq;
+  progressSyncChain = progressSyncChain.catch(() => {}).then(async () => {
+    try {
+      const updated = await api(`/api/books/${payload.book.id}/progress`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload.body),
+      });
+      const book = activeBook();
+      if (
+        sequence === state.progressSeq
+        && book?.id === payload.book.id
+        && book.currentChapter === payload.body.chapterIndex
+      ) {
+        replaceBook(updated);
+        render();
+      }
+    } catch (error) {
+      console.warn("Unable to sync progress", error);
+    }
+  });
+
+  return progressSyncChain;
 }
 
 function applyProgressPayload(payload) {
   payload.book.currentChapter = payload.body.chapterIndex;
-  payload.book.progress = payload.body.progressPercent;
+  payload.book.progress = progressPercent(
+    payload.book,
+    payload.book.chapters[payload.body.chapterIndex],
+    payload.body.elapsedSeconds,
+  );
   payload.book.resume = {
     ...(payload.book.resume || {}),
     chapter_index: payload.body.chapterIndex,
@@ -818,7 +883,6 @@ function progressPayload() {
     body: {
       chapterIndex: chapter.position,
       elapsedSeconds: state.elapsedSeconds,
-      progressPercent: progressPercent(book, chapter, state.elapsedSeconds),
     },
   };
 }
@@ -869,7 +933,12 @@ async function uploadFile(file) {
     state.activeBookId = book.id;
     localStorage.setItem("pubvox.activeBookId", book.id);
     state.elapsedSeconds = 0;
-    showProcessing(book.title, 100, book.status === "ready" ? "Ready for playback." : "Chapters queued for TTS.");
+    const step = book.status === "ready"
+      ? "Ready for playback."
+      : book.status === "unavailable"
+        ? "TTS is disabled on this server."
+        : "Chapters queued for TTS.";
+    showProcessing(book.title, 100, step);
     render();
     configureAudio();
     setTimeout(loadBooks, 1000);
@@ -899,12 +968,15 @@ function showProcessing(title, percent, step) {
 
 function updatePolling() {
   clearInterval(state.pollTimer);
+  state.pollTimer = null;
 
-  if (!state.books.some((book) => book.status === "processing")) {
+  if (!state.books.some((book) => book.status === "processing" || book.status === "queued")) {
     return;
   }
 
-  state.pollTimer = setInterval(loadBooks, 3000);
+  state.pollTimer = setInterval(() => {
+    loadBooks().catch((error) => console.warn("Unable to refresh library", error));
+  }, 3000);
 }
 
 function statusLabel(status) {
@@ -913,6 +985,7 @@ function statusLabel(status) {
     processing: "Processing",
     ready: "Ready",
     failed: "Failed",
+    unavailable: "Audio unavailable",
   };
   return labels[status] || "Unknown";
 }
@@ -955,7 +1028,7 @@ dom.timeline.addEventListener("input", (event) => {
   if (chapter.audioUrl) {
     dom.audio.currentTime = state.elapsedSeconds;
   }
-  render();
+  renderPlayer();
 });
 dom.timeline.addEventListener("change", () => syncProgress());
 dom.uploadInput.addEventListener("change", (event) => uploadFile(event.target.files[0]));
@@ -974,11 +1047,11 @@ dom.audio.addEventListener("play", () => {
     bootstrapPlaybackStarted = true;
   }
   state.isPlaying = true;
-  render();
+  renderPlayer();
 });
 dom.audio.addEventListener("pause", () => {
   state.isPlaying = false;
-  render();
+  renderPlayer();
   if (state.suppressNextPauseSync) {
     state.suppressNextPauseSync = false;
     return;
@@ -997,14 +1070,15 @@ dom.audio.addEventListener("timeupdate", () => {
   }
 
   state.elapsedSeconds = dom.audio.currentTime;
-  render();
+  renderPlayer();
 });
 dom.audio.addEventListener("loadedmetadata", () => {
   // The cache-restore path attaches a one-shot seeker for the bootstrap
   // window; here we just sync the audio element to the live `state` and
-  // repaint. `render()` handles the cache-window case via `paintCachedPlayer()`.
+  // repaint. `renderPlayer()` handles the cache-window case via
+  // `paintCachedPlayer()`.
   seekAudioToState();
-  render();
+  renderPlayer();
 });
 dom.audio.addEventListener("ended", () => advanceToNextChapter(true));
 window.addEventListener("pagehide", syncProgressBeforeUnload);
@@ -1013,7 +1087,11 @@ document.addEventListener("visibilitychange", () => {
     syncProgressBeforeUnload();
   }
 });
-state.syncTimer = setInterval(syncProgress, 5000);
+state.syncTimer = setInterval(() => {
+  if (state.isPlaying) {
+    syncProgress();
+  }
+}, 5000);
 
 restoreResumeCache();
 loadBooks().catch((error) => {

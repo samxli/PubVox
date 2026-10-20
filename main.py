@@ -14,13 +14,13 @@ from pathlib import Path
 import shutil
 import uuid
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from pubvox import database, tts
-from pubvox.config import AUDIO_DIR, STATIC_DIR, UPLOAD_DIR
+from pubvox.config import AUDIO_DIR, STATIC_DIR, TTS_ENABLED, UPLOAD_DIR
 from pubvox.epub_parser import parse_epub
 
 
@@ -32,13 +32,16 @@ VERSIONED_ASSET_PATHS = (
     STATIC_ROOT / "app.js",
 )
 BOOK_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+UPLOAD_REQUEST_OVERHEAD_BYTES = 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize local storage and SQLite tables before serving requests."""
+    """Initialize local storage and start the TTS worker before serving requests."""
     database.init_db()
+    tts.start()
     yield
 
 
@@ -46,12 +49,29 @@ app = FastAPI(title="PubVox", version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.middleware("http")
+async def limit_upload_size(request: Request, call_next):
+    """Reject oversized upload bodies before multipart parsing spools them."""
+    if request.method == "POST" and request.url.path == "/api/books":
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                too_large = int(content_length) > MAX_UPLOAD_BYTES + UPLOAD_REQUEST_OVERHEAD_BYTES
+            except ValueError:
+                too_large = False
+            if too_large:
+                return JSONResponse(
+                    {"detail": "ePub uploads are limited to 200 MB."},
+                    status_code=413,
+                )
+    return await call_next(request)
+
+
 class ProgressUpdate(BaseModel):
     """Playback position reported by the browser during listening."""
 
     chapterIndex: int = Field(ge=0)
     elapsedSeconds: float = Field(ge=0)
-    progressPercent: int = Field(ge=0, le=100)
 
 
 @app.get("/api/health")
@@ -67,19 +87,22 @@ def books() -> list[dict]:
 
 
 @app.post("/api/books", status_code=201)
-def upload_book(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-) -> dict:
+def upload_book(file: UploadFile = File(...)) -> dict:
     """Store an uploaded ePub, parse its chapters, and queue audio generation."""
     if not file.filename or not file.filename.lower().endswith(".epub"):
         raise HTTPException(status_code=400, detail="Please upload an .epub file.")
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="ePub uploads are limited to 200 MB.")
 
     book_id = uuid.uuid4().hex
     destination = UPLOAD_DIR / f"{book_id}.epub"
 
-    with destination.open("wb") as output:
-        shutil.copyfileobj(file.file, output)
+    try:
+        with destination.open("wb") as output:
+            shutil.copyfileobj(file.file, output)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
 
     try:
         parsed = parse_epub(destination)
@@ -87,14 +110,21 @@ def upload_book(
         destination.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    book = database.create_book(
-        book_id=book_id,
-        title=str(parsed["title"]),
-        author=str(parsed["author"]),
-        filename=file.filename,
-        chapters=list(parsed["chapters"]),
-    )
-    background_tasks.add_task(tts.process_book, book_id)
+    try:
+        book = database.create_book(
+            book_id=book_id,
+            title=str(parsed["title"]),
+            author=str(parsed["author"]),
+            filename=file.filename,
+            chapters=list(parsed["chapters"]),
+        )
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+
+    tts.enqueue(book_id)
+    if not TTS_ENABLED:
+        book["status"] = "unavailable"
     return book
 
 
@@ -128,11 +158,22 @@ def save_progress(book_id: str, progress: ProgressUpdate) -> dict:
         book_id=book_id,
         chapter_index=progress.chapterIndex,
         elapsed_seconds=progress.elapsedSeconds,
-        progress_percent=progress.progressPercent,
     )
     if not updated:
-        raise HTTPException(status_code=404, detail="Book not found.")
+        raise HTTPException(status_code=404, detail="Book or chapter not found.")
     return updated
+
+
+@app.post("/api/books/{book_id}/tts")
+def retry_tts(book_id: str) -> dict[str, bool]:
+    """Requeue failed or unfinished chapters for audio generation."""
+    if not TTS_ENABLED:
+        raise HTTPException(status_code=409, detail="TTS generation is disabled.")
+    if not database.book_exists(book_id):
+        raise HTTPException(status_code=404, detail="Book not found.")
+
+    tts.enqueue(book_id)
+    return {"queued": True}
 
 
 @app.get("/api/books/{book_id}/chapters/{position}/audio")
@@ -146,7 +187,7 @@ def chapter_audio(book_id: str, position: int) -> FileResponse:
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Audio file is missing.")
 
-    return FileResponse(audio_path, media_type="audio/mpeg", filename=audio_path.name)
+    return FileResponse(audio_path, media_type="audio/mpeg")
 
 
 def remove_book_files(book_id: str) -> None:
