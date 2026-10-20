@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from main import app
+from pubvox import database
 from pubvox.config import UPLOAD_DIR
 
 
@@ -75,6 +76,45 @@ def test_upload_rejects_non_epub() -> None:
         )
 
     assert response.status_code == 400
+
+
+def test_progress_uses_chapter_boundaries(client, epub_path: Path) -> None:
+    with epub_path.open("rb") as handle:
+        uploaded = client.post(
+            "/api/books",
+            files={"file": ("book.epub", handle, "application/epub+zip")},
+        )
+    book_id = uploaded.json()["id"]
+    durations = [chapter["durationSeconds"] for chapter in uploaded.json()["chapters"]]
+    total_duration = sum(durations)
+    expected = int((durations[0] / total_duration) * 100 + 0.5)
+
+    boundary = client.post(
+        f"/api/books/{book_id}/progress",
+        json={"chapterIndex": 1, "elapsedSeconds": 0},
+    )
+
+    assert boundary.status_code == 200
+    assert boundary.json()["progress"] == expected
+
+
+def test_recover_tts_queue_resets_only_processing_books(client, epub_path: Path) -> None:
+    with epub_path.open("rb") as handle:
+        uploaded = client.post(
+            "/api/books",
+            files={"file": ("book.epub", handle, "application/epub+zip")},
+        )
+    book_id = uploaded.json()["id"]
+    database.update_book_status(book_id, "processing")
+    database.update_chapter_status(book_id=book_id, position=0, status="processing")
+
+    assert book_id in database.recover_tts_queue()
+    recovered = client.get(f"/api/books/{book_id}").json()
+    assert recovered["status"] == "queued"
+    assert recovered["chapters"][0]["status"] == "queued"
+
+    database.mark_book_failed(book_id)
+    assert book_id not in database.recover_tts_queue()
 
 
 def test_upload_rejects_oversized_file(epub_path: Path, monkeypatch) -> None:

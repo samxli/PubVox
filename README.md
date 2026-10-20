@@ -64,7 +64,7 @@ PubVox can run as a Docker Space on CPU Basic hardware. A deploy script handles 
 
 - A [Hugging Face](https://huggingface.co) account
 - A write access token from [hf.co/settings/tokens](https://huggingface.co/settings/tokens)
-- A recent `huggingface_hub` installed (`pip install --upgrade huggingface_hub`; `Volume` support is required)
+- A recent `huggingface_hub` installed (`pip install --upgrade "huggingface_hub>=1.15.0"`; `Volume` support is required)
 
 ### Deploy
 

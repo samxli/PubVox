@@ -83,6 +83,43 @@ def test_enqueue_marks_book_queued(client, epub_path: Path, monkeypatch) -> None
     assert client.get(f"/api/books/{book_id}").json()["status"] == "queued"
 
 
+def test_start_marks_queued_books_unavailable_when_tts_disabled(
+    client,
+    epub_path: Path,
+    monkeypatch,
+) -> None:
+    with epub_path.open("rb") as handle:
+        uploaded = client.post(
+            "/api/books",
+            files={"file": ("book.epub", handle, "application/epub+zip")},
+        )
+    book_id = uploaded.json()["id"]
+    database.update_book_status(book_id, "queued")
+
+    monkeypatch.setattr(tts, "TTS_ENABLED", False)
+    tts.start()
+
+    assert client.get(f"/api/books/{book_id}").json()["status"] == "unavailable"
+
+
+def test_start_requeues_interrupted_books(client, epub_path: Path, monkeypatch) -> None:
+    with epub_path.open("rb") as handle:
+        uploaded = client.post(
+            "/api/books",
+            files={"file": ("book.epub", handle, "application/epub+zip")},
+        )
+    book_id = uploaded.json()["id"]
+    database.update_book_status(book_id, "queued")
+
+    queued: list[str] = []
+    monkeypatch.setattr(tts, "TTS_ENABLED", True)
+    monkeypatch.setattr(tts, "_ensure_worker", lambda: None)
+    monkeypatch.setattr(tts._pending, "put", queued.append)
+    tts.start()
+
+    assert book_id in queued
+
+
 def test_synthesize_retries_transient_errors(tmp_path: Path, monkeypatch) -> None:
     calls = 0
 
