@@ -86,6 +86,7 @@ def init_db() -> None:
                 chapter_index INTEGER NOT NULL,
                 elapsed_seconds REAL NOT NULL DEFAULT 0,
                 revision INTEGER NOT NULL DEFAULT 0,
+                client_id TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL
             );
             """
@@ -96,6 +97,10 @@ def init_db() -> None:
         if "revision" not in progress_columns:
             connection.execute(
                 "ALTER TABLE progress ADD COLUMN revision INTEGER NOT NULL DEFAULT 0"
+            )
+        if "client_id" not in progress_columns:
+            connection.execute(
+                "ALTER TABLE progress ADD COLUMN client_id TEXT NOT NULL DEFAULT ''"
             )
         connection.execute(
             """
@@ -293,6 +298,14 @@ def recover_tts_queue() -> list[str]:
             SELECT id
             FROM books
             WHERE status = 'queued'
+               OR (
+                   status = 'unavailable'
+                   AND EXISTS (
+                       SELECT 1 FROM chapters
+                       WHERE chapters.book_id = books.id
+                         AND chapters.status = 'queued'
+                   )
+               )
             ORDER BY created_at ASC
             """
         ).fetchall()
@@ -337,10 +350,12 @@ def update_progress(
     chapter_index: int,
     elapsed_seconds: float,
     revision: int = 0,
+    client_id: str = "",
 ) -> dict[str, Any] | None:
     """Persist resume state and compute whole-book progress on the server."""
     now = utc_now()
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         row = _book_row(connection, book_id)
         if not row:
             return None
@@ -359,10 +374,14 @@ def update_progress(
             return None
 
         existing_progress = connection.execute(
-            "SELECT revision FROM progress WHERE book_id = ?",
+            "SELECT revision, client_id FROM progress WHERE book_id = ?",
             (book_id,),
         ).fetchone()
-        if existing_progress and revision < existing_progress["revision"]:
+        if (
+            existing_progress
+            and existing_progress["client_id"] == client_id
+            and revision < existing_progress["revision"]
+        ):
             return _book_payload(connection, row)
 
         total_duration = sum(item["duration_seconds"] for item in chapters)
@@ -386,16 +405,17 @@ def update_progress(
         connection.execute(
             """
             INSERT INTO progress (
-                book_id, chapter_index, elapsed_seconds, revision, updated_at
+                book_id, chapter_index, elapsed_seconds, revision, client_id, updated_at
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(book_id) DO UPDATE SET
                 chapter_index = excluded.chapter_index,
                 elapsed_seconds = excluded.elapsed_seconds,
                 revision = excluded.revision,
+                client_id = excluded.client_id,
                 updated_at = excluded.updated_at
             """,
-            (book_id, chapter_index, elapsed_seconds, revision, now),
+            (book_id, chapter_index, elapsed_seconds, revision, client_id, now),
         )
         return _book_payload(connection, _book_row(connection, book_id))
 

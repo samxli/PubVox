@@ -36,7 +36,7 @@ try:
 except ImportError:
     raise SystemExit(
         "huggingface_hub is required. Install it with:\n"
-        "  pip install huggingface_hub"
+        "  pip install --upgrade \"huggingface_hub>=1.15.0\""
     )
 
 try:
@@ -63,34 +63,7 @@ DEFAULT_VARIABLES: dict[str, str] = {
     "PUBVOX_DATA_DIR": "/app/data",
 }
 
-# Files/dirs to exclude from the HF upload
-IGNORE_PATTERNS = [
-    ".git",
-    ".github",
-    ".venv",
-    ".venv/**",
-    ".env",
-    ".env.*",
-    ".pytest_cache",
-    ".pytest_cache/**",
-    "__pycache__",
-    "__pycache__/**",
-    "*.pyc",
-    "*.pem",
-    "*.key",
-    ".DS_Store",
-    "scripts",
-    "scripts/**",
-    "prototype",
-    "prototype/**",
-    "tests",
-    "tests/**",
-    "requirements-dev.txt",
-    "AGENTS.md",
-    "data",
-    "data/**",
-    "*.db",
-]
+DEPLOY_PATHS = ("main.py", "pubvox", "requirements.txt", "Dockerfile")
 
 
 def _validate_repo_id(value: str) -> str:
@@ -212,7 +185,7 @@ def main() -> None:
         print("[dry-run] Would create/update the Space and upload files.")
         print(f"[dry-run] README would have {len(HF_README_FRONTMATTER.splitlines())} lines of frontmatter prepended.")
         print("[dry-run] Upload dir (copy of project with patched README): <tempdir>")
-        print(f"[dry-run] Ignore patterns: {IGNORE_PATTERNS}")
+        print(f"[dry-run] Deploy paths: {DEPLOY_PATHS}")
         return
 
     # Create the Space (no-op if it already exists)
@@ -275,13 +248,18 @@ def main() -> None:
     # Upload files with frontmatter-injected README (single commit)
     print("Uploading files...")
     with tempfile.TemporaryDirectory() as tmp_dir:
-        shutil.copytree(
-            ROOT_DIR,
-            tmp_dir,
-            dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns(*IGNORE_PATTERNS),
-            symlinks=False,
-        )
+        for name in DEPLOY_PATHS:
+            source = ROOT_DIR / name
+            target = Path(tmp_dir) / name
+            if source.is_dir():
+                shutil.copytree(
+                    source,
+                    target,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                    symlinks=False,
+                )
+            else:
+                shutil.copy2(source, target)
         tmp_readme = Path(tmp_dir) / "README.md"
         tmp_readme.write_text(build_readme_content(), encoding="utf-8")
 

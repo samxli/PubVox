@@ -7,6 +7,7 @@
 const state = {
   books: [],
   activeBookId: localStorage.getItem("pubvox.activeBookId"),
+  clientId: getClientId(),
   elapsedSeconds: 0,
   isPlaying: false,
   isSeekingFromState: false,
@@ -23,6 +24,22 @@ const state = {
 const RESUME_CACHE_KEY = "pubvox.resumeCache";
 const RESUME_CACHE_MIN_ELAPSED_DELTA_SECONDS = 1;
 const PROGRESS_SYNC_TIMEOUT_MS = 10000;
+
+function getClientId() {
+  try {
+    const existing = sessionStorage.getItem("pubvox.clientId");
+    if (existing) {
+      return existing;
+    }
+    const generated = crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    sessionStorage.setItem("pubvox.clientId", generated);
+    return generated;
+  } catch {
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+}
 
 // Parsed cache payload held in memory while `state.books` is still loading.
 // Set by `restoreResumeCache()` on bootstrap, consulted by `render()` and
@@ -930,6 +947,7 @@ function progressPayload() {
     body: {
       chapterIndex: chapter.position,
       elapsedSeconds: state.elapsedSeconds,
+      clientId: state.clientId,
     },
   };
 }

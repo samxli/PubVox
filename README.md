@@ -24,7 +24,14 @@
 
 The easiest way to get PubVox running is via Docker Compose.
 
-1. Create a `docker-compose.yml` file:
+1. Clone this repository and enter it:
+
+   ```shell
+   git clone https://github.com/samxli/PubVox.git
+   cd PubVox
+   ```
+
+2. Create a `docker-compose.yml` file:
 
    ```yaml
    services:
@@ -44,13 +51,13 @@ The easiest way to get PubVox running is via Docker Compose.
      pubvox-data:
    ```
 
-2. Run the container:
+3. Run the container:
 
    ```shell
-   docker-compose up -d
+   docker compose up -d
    ```
 
-3. Open your browser and navigate to `http://localhost:8000`.
+4. Open your browser and navigate to `http://localhost:8000`.
 
 The compose file enables TTS by default. Set `PUBVOX_TTS_ENABLED=0` to disable it. If you previously stored data in a local `./data` bind mount, copy that directory into the `pubvox-data` volume before switching.
 

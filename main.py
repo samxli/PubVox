@@ -131,6 +131,7 @@ class ProgressUpdate(BaseModel):
     chapterIndex: int = Field(ge=0)
     elapsedSeconds: float = Field(ge=0)
     revision: int = Field(default=0, ge=0)
+    clientId: str = Field(default="", max_length=64)
 
 
 @app.get("/api/health")
@@ -226,6 +227,7 @@ def save_progress(book_id: str, progress: ProgressUpdate) -> dict:
         chapter_index=progress.chapterIndex,
         elapsed_seconds=progress.elapsedSeconds,
         revision=progress.revision,
+        client_id=progress.clientId,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Book or chapter not found.")

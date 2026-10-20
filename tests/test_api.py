@@ -56,6 +56,18 @@ def test_upload_progress_and_delete(epub_path: Path) -> None:
         assert stale.json()["resume"]["elapsed_seconds"] == 45
         assert stale.json()["resume"]["revision"] == 2
 
+        takeover = client.post(
+            f"/api/books/{book_id}/progress",
+            json={
+                "chapterIndex": 0,
+                "elapsedSeconds": 5,
+                "revision": 1,
+                "clientId": "other-device",
+            },
+        )
+        assert takeover.status_code == 200
+        assert takeover.json()["resume"]["elapsed_seconds"] == 5
+
         missing_audio = client.get(f"/api/books/{book_id}/chapters/0/audio")
         assert missing_audio.status_code == 404
 
@@ -115,6 +127,17 @@ def test_recover_tts_queue_resets_only_processing_books(client, epub_path: Path)
 
     database.mark_book_failed(book_id)
     assert book_id not in database.recover_tts_queue()
+
+
+def test_recover_tts_queue_includes_unavailable_books(client, epub_path: Path) -> None:
+    with epub_path.open("rb") as handle:
+        uploaded = client.post(
+            "/api/books",
+            files={"file": ("book.epub", handle, "application/epub+zip")},
+        )
+
+    assert uploaded.json()["status"] == "unavailable"
+    assert uploaded.json()["id"] in database.recover_tts_queue()
 
 
 def test_upload_rejects_oversized_file(epub_path: Path, monkeypatch) -> None:
