@@ -7,6 +7,7 @@ exist.
 
 from __future__ import annotations
 
+from copy import copy
 from pathlib import Path
 import re
 
@@ -15,6 +16,22 @@ from ebooklib import ITEM_DOCUMENT, epub
 
 
 WORDS_PER_MINUTE = 165
+BLOCK_TAGS = (
+    "div",
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "li",
+    "blockquote",
+    "pre",
+    "td",
+    "th",
+)
+BR_TOKEN = "\ue000"
 
 
 def parse_epub(file_path: Path) -> dict[str, object]:
@@ -41,21 +58,22 @@ def _metadata_value(book: epub.EpubBook, key: str) -> str | None:
 
 
 def _extract_chapters(book: epub.EpubBook) -> list[dict[str, object]]:
-    """Extract readable document items as ordered chapter records."""
+    """Extract readable document items in spine order as chapter records."""
     chapters: list[dict[str, object]] = []
     short_sections: list[dict[str, object]] = []
 
-    for item in book.get_items_of_type(ITEM_DOCUMENT):
+    for item in _reading_order(book):
         soup = BeautifulSoup(item.get_content(), "html.parser")
-        for tag in soup(["script", "style", "nav"]):
+        for tag in soup(["script", "style", "nav", "head"]):
             tag.decompose()
 
-        text = _clean_text(soup.get_text("\n"))
+        title = _chapter_title(soup, item.get_name())
+        text = _extract_text(soup)
         if not text:
             continue
 
         chapter = {
-            "title": _chapter_title(soup, item.get_name()),
+            "title": title,
             "text": text,
             "duration_seconds": _estimate_duration_seconds(text),
         }
@@ -68,11 +86,42 @@ def _extract_chapters(book: epub.EpubBook) -> list[dict[str, object]]:
     return chapters or short_sections
 
 
+def _reading_order(book: epub.EpubBook) -> list[epub.EpubItem]:
+    """Return linear document items in spine order, falling back to manifest order."""
+    items: list[epub.EpubItem] = []
+
+    for idref, linear in book.spine:
+        if str(linear).lower() == "no":
+            continue
+        item = book.get_item_with_id(idref)
+        if item is None or item.get_type() != ITEM_DOCUMENT:
+            continue
+        items.append(item)
+
+    if items or book.spine:
+        return items
+    return list(book.get_items_of_type(ITEM_DOCUMENT))
+
+
+def _extract_text(soup: BeautifulSoup) -> str:
+    """Turn block-level HTML into paragraph-separated plain text."""
+    for br in soup.find_all("br"):
+        br.replace_with(BR_TOKEN)
+    for tag in soup.find_all(BLOCK_TAGS):
+        tag.insert_before("\n\n")
+        tag.insert_after("\n\n")
+
+    return _clean_text(soup.get_text("")).replace(BR_TOKEN, "\n")
+
+
 def _chapter_title(soup: BeautifulSoup, fallback: str) -> str:
     """Prefer the first heading for a chapter title, then fall back to filename."""
     heading = soup.find(["h1", "h2", "h3"])
     if heading:
-        title = _clean_text(heading.get_text(" "))
+        fragment = copy(heading)
+        for br in fragment.find_all("br"):
+            br.replace_with(" ")
+        title = _clean_text(fragment.get_text("").replace(BR_TOKEN, " "))
         if title:
             return title
 

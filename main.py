@@ -8,19 +8,21 @@ persistence, parsing, and TTS work to the package modules.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 import logging
 import re
 from pathlib import Path
 import shutil
+from typing import Any
 import uuid
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from pubvox import database, tts
-from pubvox.config import AUDIO_DIR, STATIC_DIR, UPLOAD_DIR
+from pubvox.config import AUDIO_DIR, STATIC_DIR, TTS_ENABLED, UPLOAD_DIR
 from pubvox.epub_parser import parse_epub
 
 
@@ -32,17 +34,94 @@ VERSIONED_ASSET_PATHS = (
     STATIC_ROOT / "app.js",
 )
 BOOK_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+UPLOAD_REQUEST_OVERHEAD_BYTES = 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize local storage and SQLite tables before serving requests."""
+    """Initialize local storage and start the TTS worker before serving requests."""
     database.init_db()
+    tts.start()
     yield
 
 
+class UploadSizeLimitMiddleware:
+    """Count upload bytes so chunked requests cannot bypass the size limit."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or scope["path"] != "/api/books"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        content_length = dict(scope.get("headers", [])).get(b"content-length")
+        if content_length is not None:
+            try:
+                too_large = (
+                    int(content_length)
+                    > MAX_UPLOAD_BYTES + UPLOAD_REQUEST_OVERHEAD_BYTES
+                )
+            except ValueError:
+                await self._reject(send, 400, "Invalid Content-Length header.")
+                return
+            if too_large:
+                await self._reject(send, 413, "ePub uploads are limited to 200 MB.")
+                return
+
+        total_bytes = 0
+        limit_exceeded = False
+        response_started = False
+
+        async def limited_receive() -> Any:
+            nonlocal total_bytes, limit_exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                total_bytes += len(message.get("body", b""))
+                if total_bytes > MAX_UPLOAD_BYTES + UPLOAD_REQUEST_OVERHEAD_BYTES:
+                    limit_exceeded = True
+                    return {"type": "http.request", "body": b"", "more_body": False}
+            return message
+
+        async def tracked_send(message: Any) -> None:
+            nonlocal response_started
+            if limit_exceeded and not response_started:
+                response_started = True
+                await self._reject(send, 413, "ePub uploads are limited to 200 MB.")
+                return
+            if limit_exceeded:
+                return
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        await self.app(scope, limited_receive, tracked_send)
+
+    @staticmethod
+    async def _reject(send: Any, status_code: int, detail: str) -> None:
+        body = json.dumps({"detail": detail}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+
 app = FastAPI(title="PubVox", version="0.1.0", lifespan=lifespan)
+app.add_middleware(UploadSizeLimitMiddleware)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -51,7 +130,8 @@ class ProgressUpdate(BaseModel):
 
     chapterIndex: int = Field(ge=0)
     elapsedSeconds: float = Field(ge=0)
-    progressPercent: int = Field(ge=0, le=100)
+    revision: int = Field(default=0, ge=0, le=2**63 - 1)
+    clientId: str = Field(default="", max_length=64)
 
 
 @app.get("/api/health")
@@ -67,19 +147,30 @@ def books() -> list[dict]:
 
 
 @app.post("/api/books", status_code=201)
-def upload_book(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-) -> dict:
+def upload_book(file: UploadFile = File(...)) -> dict:
     """Store an uploaded ePub, parse its chapters, and queue audio generation."""
     if not file.filename or not file.filename.lower().endswith(".epub"):
         raise HTTPException(status_code=400, detail="Please upload an .epub file.")
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="ePub uploads are limited to 200 MB.")
 
     book_id = uuid.uuid4().hex
     destination = UPLOAD_DIR / f"{book_id}.epub"
 
-    with destination.open("wb") as output:
-        shutil.copyfileobj(file.file, output)
+    try:
+        total_bytes = 0
+        with destination.open("wb") as output:
+            while chunk := file.file.read(1024 * 1024):
+                total_bytes += len(chunk)
+                if total_bytes > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="ePub uploads are limited to 200 MB.",
+                    )
+                output.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
 
     try:
         parsed = parse_epub(destination)
@@ -87,14 +178,21 @@ def upload_book(
         destination.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    book = database.create_book(
-        book_id=book_id,
-        title=str(parsed["title"]),
-        author=str(parsed["author"]),
-        filename=file.filename,
-        chapters=list(parsed["chapters"]),
-    )
-    background_tasks.add_task(tts.process_book, book_id)
+    try:
+        book = database.create_book(
+            book_id=book_id,
+            title=str(parsed["title"]),
+            author=str(parsed["author"]),
+            filename=file.filename,
+            chapters=list(parsed["chapters"]),
+        )
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+
+    tts.enqueue(book_id)
+    if not TTS_ENABLED:
+        book["status"] = "unavailable"
     return book
 
 
@@ -128,11 +226,24 @@ def save_progress(book_id: str, progress: ProgressUpdate) -> dict:
         book_id=book_id,
         chapter_index=progress.chapterIndex,
         elapsed_seconds=progress.elapsedSeconds,
-        progress_percent=progress.progressPercent,
+        revision=progress.revision,
+        client_id=progress.clientId,
     )
     if not updated:
-        raise HTTPException(status_code=404, detail="Book not found.")
+        raise HTTPException(status_code=404, detail="Book or chapter not found.")
     return updated
+
+
+@app.post("/api/books/{book_id}/tts")
+def retry_tts(book_id: str) -> dict[str, bool]:
+    """Requeue failed or unfinished chapters for audio generation."""
+    if not TTS_ENABLED:
+        raise HTTPException(status_code=409, detail="TTS generation is disabled.")
+    if not database.book_exists(book_id):
+        raise HTTPException(status_code=404, detail="Book not found.")
+
+    tts.enqueue(book_id)
+    return {"queued": True}
 
 
 @app.get("/api/books/{book_id}/chapters/{position}/audio")
@@ -146,7 +257,7 @@ def chapter_audio(book_id: str, position: int) -> FileResponse:
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Audio file is missing.")
 
-    return FileResponse(audio_path, media_type="audio/mpeg", filename=audio_path.name)
+    return FileResponse(audio_path, media_type="audio/mpeg")
 
 
 def remove_book_files(book_id: str) -> None:

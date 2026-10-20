@@ -1,30 +1,78 @@
 """Background text-to-speech generation for parsed chapters.
 
-The first implementation uses FastAPI background tasks instead of a separate
-queue service. When TTS is disabled, uploads still produce library/chapter data
-so the rest of the app can be developed without external network calls.
+Audio generation runs on a single daemon worker thread so uploads return
+immediately and only one book is synthesized at a time. When TTS is disabled,
+uploads still produce library/chapter data so the rest of the app can be
+developed without external network calls.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
+import queue
 import shutil
+import threading
 
 from . import database
 from .config import AUDIO_DIR, TTS_ENABLED, TTS_VOICE
 
 
 logger = logging.getLogger(__name__)
+SYNTHESIS_TIMEOUT_SECONDS = 600
+SYNTHESIS_ATTEMPTS = 3
+SYNTHESIS_RETRY_SECONDS = 2
+
+_pending: queue.Queue[str] = queue.Queue()
+_worker: threading.Thread | None = None
+_worker_lock = threading.Lock()
 
 
-def process_book(book_id: str) -> None:
-    """Run chapter audio generation for a book when TTS is enabled."""
+def start() -> None:
+    """Start the worker and requeue books left unfinished by a restart."""
     if not TTS_ENABLED:
-        database.update_book_status(book_id, "queued")
+        database.mark_audio_unavailable()
         return
 
-    asyncio.run(_process_book(book_id))
+    _ensure_worker()
+    for book_id in database.recover_tts_queue():
+        _pending.put(book_id)
+
+
+def enqueue(book_id: str) -> None:
+    """Queue a book for audio generation."""
+    if not TTS_ENABLED:
+        database.update_book_status(book_id, "unavailable")
+        return
+
+    _ensure_worker()
+    database.update_book_status(book_id, "queued")
+    _pending.put(book_id)
+
+
+def _ensure_worker() -> None:
+    global _worker
+    with _worker_lock:
+        if _worker is not None and _worker.is_alive():
+            return
+        _worker = threading.Thread(target=_worker_loop, name="pubvox-tts", daemon=True)
+        _worker.start()
+
+
+def _worker_loop() -> None:
+    while True:
+        book_id = _pending.get()
+        try:
+            asyncio.run(_process_book(book_id))
+        except Exception:
+            logger.exception("TTS worker failed for book %s", book_id)
+            try:
+                database.mark_book_failed(book_id)
+            except Exception:
+                logger.exception("Unable to mark book %s failed", book_id)
+        finally:
+            _pending.task_done()
 
 
 async def _process_book(book_id: str) -> None:
@@ -49,7 +97,7 @@ async def _process_book(book_id: str) -> None:
         database.update_chapter_status(book_id=book_id, position=position, status="processing")
 
         try:
-            await _synthesize(chapter["text"], output_path)
+            await _synthesize(book_id, chapter["text"], output_path)
         except Exception:
             logger.exception("TTS generation failed for book %s chapter %s", book_id, position)
             database.update_chapter_status(book_id=book_id, position=position, status="failed")
@@ -71,10 +119,29 @@ async def _process_book(book_id: str) -> None:
     database.update_book_status(book_id, "ready")
 
 
-async def _synthesize(text: str, output_path) -> None:
+async def _synthesize(book_id: str, text: str, output_path: Path) -> None:
     """Send one chapter's text to Edge TTS and save the resulting MP3."""
     import edge_tts  # type: ignore[reportMissingImports]
 
-    communicate = edge_tts.Communicate(text, TTS_VOICE)
-    await communicate.save(str(output_path))
-
+    for attempt in range(SYNTHESIS_ATTEMPTS):
+        try:
+            communicate = edge_tts.Communicate(text, TTS_VOICE)
+            await asyncio.wait_for(
+                communicate.save(str(output_path)),
+                timeout=SYNTHESIS_TIMEOUT_SECONDS,
+            )
+            return
+        except Exception:
+            logger.warning(
+                "TTS attempt %d/%d failed for book %s",
+                attempt + 1,
+                SYNTHESIS_ATTEMPTS,
+                book_id,
+                exc_info=True,
+            )
+            output_path.unlink(missing_ok=True)
+            if not database.book_exists(book_id):
+                return
+            if attempt == SYNTHESIS_ATTEMPTS - 1:
+                raise
+            await asyncio.sleep(SYNTHESIS_RETRY_SECONDS * (attempt + 1))

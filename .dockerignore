@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+.pytest_cache
+data
+prototype
+tests
+requirements-dev.txt
+AGENTS.md
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.db
