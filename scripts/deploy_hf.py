@@ -42,7 +42,7 @@ try:
 except ImportError:
     raise SystemExit(
         "huggingface_hub is required. Install it with:\n"
-        "  pip install --upgrade \"huggingface_hub>=1.15.0\""
+        "  pip install --upgrade \"huggingface_hub>=1.15.0,<2.0.0\""
     )
 
 try:

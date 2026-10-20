@@ -30,7 +30,7 @@ Check the Hugging Face pricing page before deploying; the numbers and plan requi
 
 - A [Hugging Face](https://huggingface.co) account with a plan that can create Docker Spaces
 - A write access token from [hf.co/settings/tokens](https://huggingface.co/settings/tokens)
-- Python with a recent `huggingface_hub`: `pip install --upgrade "huggingface_hub>=1.15.0"` (`Volume` support is required)
+- Python with a recent `huggingface_hub`: `pip install --upgrade "huggingface_hub>=1.15.0,<2.0.0"` (`Volume` support is required)
 
 ## Deploy
 
