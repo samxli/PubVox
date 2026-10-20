@@ -108,8 +108,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--private",
         action="store_true",
-        default=False,
-        help="Create the Space as private (default: public).",
+        default=None,
+        help=(
+            "Create the Space as private and make an existing Space private. "
+            "When omitted, new Spaces are public and existing Spaces keep "
+            "their current visibility."
+        ),
     )
     parser.add_argument(
         "--hardware",
@@ -201,7 +205,10 @@ def main() -> None:
     print(f"Hardware:    {args.hardware}")
     storage = "skipped" if args.no_storage else "/app/data (bucket)"
     print(f"Storage:     {storage}")
-    print(f"Private:     {args.private}")
+    visibility = (
+        "private" if args.private else "public for new Spaces; unchanged for existing"
+    )
+    print(f"Private:     {visibility}")
     print(f"Variables:   {variables}")
     print()
 
@@ -219,7 +226,7 @@ def main() -> None:
             repo_id=args.repo_id,
             repo_type="space",
             space_sdk="docker",
-            private=args.private,
+            private=bool(args.private),
             exist_ok=True,
         )
     except Exception as exc:
@@ -231,13 +238,15 @@ def main() -> None:
                 "  Details: HF_DEPLOY.md"
             ) from exc
         raise
-    # Always enforce the visibility setting (create_repo is a no-op when the
-    # Space already exists, so --private would otherwise be silently ignored).
-    api.update_repo_settings(
-        repo_id=args.repo_id,
-        repo_type="space",
-        private=args.private,
-    )
+    # Only change visibility when explicitly requested. create_repo is a no-op
+    # for existing Spaces, and forcing the default here would make a private
+    # Space public on the next deploy.
+    if args.private is not None:
+        api.update_repo_settings(
+            repo_id=args.repo_id,
+            repo_type="space",
+            private=args.private,
+        )
 
     # Set persistent storage (create a bucket and mount it at /app/data)
     if not args.no_storage:

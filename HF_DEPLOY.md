@@ -41,24 +41,24 @@ export HF_TOKEN=<your-hf-token>
 python scripts/deploy_hf.py --repo-id <your-username>/pubvox --private --tts-enabled
 ```
 
-Spaces are public by default. Pass `--private` for a personal library; PubVox has no authentication, so a public Space exposes your uploaded books and generated audio to anyone who can reach the URL.
+New Spaces are public by default. Pass `--private` for a personal library; PubVox has no authentication, so a public Space exposes your uploaded books and generated audio to anyone who can reach the URL. Rerunning the script without `--private` leaves an existing Space's visibility unchanged, so an already-private Space stays private.
 
 Useful flags:
 
 | Flag | Purpose |
 | --- | --- |
-| `--private` | Make the Space private (recommended) |
+| `--private` | Create the Space private; also makes an existing Space private (omitted: existing visibility is kept) |
 | `--tts-enabled` | Set `PUBVOX_TTS_ENABLED=1` |
 | `--tts-voice` | Edge TTS voice (default `en-US-AriaNeural`) |
 | `--hardware` | Space hardware tier (default `cpu-basic`) |
-| `--no-storage` | Skip bucket creation and mounting (data is lost on restart) |
+| `--no-storage` | Skip bucket creation and mounting; does not unmount an existing bucket, so data may still persist |
 | `--dry-run` | Print the plan without creating or uploading anything |
 
 Run `python scripts/deploy_hf.py --help` for the full list.
 
 ## Persistent storage
 
-The script creates a private storage bucket and mounts it at `/app/data`, which is where PubVox keeps `app.db`, uploaded ePubs, and generated chapter audio. No manual setup is needed unless you pass `--no-storage`.
+The script creates a private storage bucket and mounts it at `/app/data`, which is where PubVox keeps `app.db`, uploaded ePubs, and generated chapter audio. No manual setup is needed unless you pass `--no-storage`. `--no-storage` only skips this setup step; it does not unmount a bucket already attached to the Space, so an existing Space can keep persisting data.
 
 If the bucket already exists and is public, the script stops with an error. Make it private in Hugging Face settings or delete it, then rerun.
 
@@ -81,7 +81,7 @@ If the bucket already exists and is public, the script stops with an error. Make
 
 - **`402` / payment required when creating the Space** — Docker Spaces need a paid plan. Upgrade the account, or self-host with Docker instead.
 - **`Volume` import error** — upgrade `huggingface_hub` to `>=1.15.0`.
-- **Library disappears after a restart** — the Space was deployed with `--no-storage`, or the bucket is not mounted at `/app/data`. Rerun without `--no-storage`.
+- **Library disappears after a restart** — the Space has no bucket mounted at `/app/data` (for example, it was first deployed with `--no-storage`). Rerun without `--no-storage` to create and mount one.
 - **Audio generation is slow or stuck at `processing`** — Edge TTS runs sequentially, one chapter at a time, and long books can take a while. Check the Space logs; failed chapters can be retried from the UI.
 
 ## Security notes

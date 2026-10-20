@@ -4,6 +4,7 @@
  * The frontend keeps only transient playback state locally. Book/chapter data,
  * upload processing, and progress persistence flow through the FastAPI JSON API.
  */
+const CLIENT_ID_PREFIX = "pubvox:";
 const PROGRESS_REVISION_KEY = "pubvox.progressRevision";
 
 const state = {
@@ -29,14 +30,15 @@ const PROGRESS_SYNC_TIMEOUT_MS = 10000;
 
 function getClientId() {
   try {
-    const existing = sessionStorage.getItem("pubvox.clientId");
-    if (existing) {
-      return existing;
+    // window.name survives reloads per tab, but sessionStorage is copied when
+    // a tab is duplicated, which would give both tabs the same client ID.
+    if (window.name.startsWith(CLIENT_ID_PREFIX)) {
+      return window.name.slice(CLIENT_ID_PREFIX.length);
     }
     const generated = crypto.randomUUID
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    sessionStorage.setItem("pubvox.clientId", generated);
+    window.name = `${CLIENT_ID_PREFIX}${generated}`;
     return generated;
   } catch {
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;

@@ -69,3 +69,13 @@ def test_chapter_title_ignores_extracted_body_tokens() -> None:
 
     assert title == "Chapter One"
     assert BR_TOKEN not in title
+
+
+def test_heading_line_breaks_survive_text_extraction() -> None:
+    soup = BeautifulSoup("<h1>Chapter<br>One</h1><p>Body.</p>", "html.parser")
+
+    title = _chapter_title(soup, "fallback.xhtml")
+    text = _extract_text(soup)
+
+    assert title == "Chapter One"
+    assert "Chapter\nOne" in text

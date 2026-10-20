@@ -7,6 +7,7 @@ exist.
 
 from __future__ import annotations
 
+from copy import copy
 from pathlib import Path
 import re
 
@@ -117,9 +118,10 @@ def _chapter_title(soup: BeautifulSoup, fallback: str) -> str:
     """Prefer the first heading for a chapter title, then fall back to filename."""
     heading = soup.find(["h1", "h2", "h3"])
     if heading:
-        for br in heading.find_all("br"):
+        fragment = copy(heading)
+        for br in fragment.find_all("br"):
             br.replace_with(" ")
-        title = _clean_text(heading.get_text("").replace(BR_TOKEN, " "))
+        title = _clean_text(fragment.get_text("").replace(BR_TOKEN, " "))
         if title:
             return title
 
