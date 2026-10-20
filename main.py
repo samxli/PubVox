@@ -8,14 +8,16 @@ persistence, parsing, and TTS work to the package modules.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 import logging
 import re
 from pathlib import Path
 import shutil
+from typing import Any
 import uuid
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -45,33 +47,82 @@ async def lifespan(app: FastAPI):
     yield
 
 
+class UploadSizeLimitMiddleware:
+    """Count upload bytes so chunked requests cannot bypass the size limit."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or scope["path"] != "/api/books"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        content_length = dict(scope.get("headers", [])).get(b"content-length")
+        if content_length is not None:
+            try:
+                too_large = (
+                    int(content_length)
+                    > MAX_UPLOAD_BYTES + UPLOAD_REQUEST_OVERHEAD_BYTES
+                )
+            except ValueError:
+                await self._reject(send, 400, "Invalid Content-Length header.")
+                return
+            if too_large:
+                await self._reject(send, 413, "ePub uploads are limited to 200 MB.")
+                return
+
+        total_bytes = 0
+        limit_exceeded = False
+        response_started = False
+
+        async def limited_receive() -> Any:
+            nonlocal total_bytes, limit_exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                total_bytes += len(message.get("body", b""))
+                if total_bytes > MAX_UPLOAD_BYTES + UPLOAD_REQUEST_OVERHEAD_BYTES:
+                    limit_exceeded = True
+                    return {"type": "http.request", "body": b"", "more_body": False}
+            return message
+
+        async def tracked_send(message: Any) -> None:
+            nonlocal response_started
+            if limit_exceeded and not response_started:
+                response_started = True
+                await self._reject(send, 413, "ePub uploads are limited to 200 MB.")
+                return
+            if limit_exceeded:
+                return
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        await self.app(scope, limited_receive, tracked_send)
+
+    @staticmethod
+    async def _reject(send: Any, status_code: int, detail: str) -> None:
+        body = json.dumps({"detail": detail}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+
 app = FastAPI(title="PubVox", version="0.1.0", lifespan=lifespan)
+app.add_middleware(UploadSizeLimitMiddleware)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
-@app.middleware("http")
-async def limit_upload_size(request: Request, call_next):
-    """Reject oversized upload bodies before multipart parsing spools them."""
-    if request.method == "POST" and request.url.path == "/api/books":
-        content_length = request.headers.get("content-length")
-        if content_length is None:
-            return JSONResponse(
-                {"detail": "Content-Length header is required for uploads."},
-                status_code=411,
-            )
-        try:
-            too_large = int(content_length) > MAX_UPLOAD_BYTES + UPLOAD_REQUEST_OVERHEAD_BYTES
-        except ValueError:
-            return JSONResponse(
-                {"detail": "Invalid Content-Length header."},
-                status_code=400,
-            )
-        if too_large:
-            return JSONResponse(
-                {"detail": "ePub uploads are limited to 200 MB."},
-                status_code=413,
-            )
-    return await call_next(request)
 
 
 class ProgressUpdate(BaseModel):

@@ -132,6 +132,28 @@ def test_upload_rejects_oversized_file(epub_path: Path, monkeypatch) -> None:
     assert response.status_code == 413
 
 
+def test_upload_rejects_chunked_oversized_body(monkeypatch) -> None:
+    import main
+
+    monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 1)
+    monkeypatch.setattr(main, "UPLOAD_REQUEST_OVERHEAD_BYTES", 0)
+
+    def body():
+        yield (
+            b'--xxx\r\nContent-Disposition: form-data; name="file"; '
+            b'filename="book.epub"\r\n\r\nx\r\n--xxx--\r\n'
+        )
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/books",
+            content=body(),
+            headers={"content-type": "multipart/form-data; boundary=xxx"},
+        )
+
+    assert response.status_code == 413
+
+
 def test_upload_rejects_oversized_content_length() -> None:
     with TestClient(app) as client:
         response = client.post(
