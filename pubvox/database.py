@@ -89,6 +89,13 @@ def init_db() -> None:
                 client_id TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS progress_revisions (
+                book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                client_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                PRIMARY KEY (book_id, client_id)
+            );
             """
         )
         progress_columns = {
@@ -373,16 +380,25 @@ def update_progress(
         if chapter is None:
             return None
 
-        existing_progress = connection.execute(
-            "SELECT revision, client_id FROM progress WHERE book_id = ?",
-            (book_id,),
+        existing_revision = connection.execute(
+            """
+            SELECT revision FROM progress_revisions
+            WHERE book_id = ? AND client_id = ?
+            """,
+            (book_id, client_id),
         ).fetchone()
-        if (
-            existing_progress
-            and existing_progress["client_id"] == client_id
-            and revision < existing_progress["revision"]
-        ):
+        if existing_revision and revision < existing_revision["revision"]:
             return _book_payload(connection, row)
+
+        connection.execute(
+            """
+            INSERT INTO progress_revisions (book_id, client_id, revision)
+            VALUES (?, ?, ?)
+            ON CONFLICT(book_id, client_id) DO UPDATE SET
+                revision = excluded.revision
+            """,
+            (book_id, client_id, revision),
+        )
 
         total_duration = sum(item["duration_seconds"] for item in chapters)
         completed_duration = sum(
