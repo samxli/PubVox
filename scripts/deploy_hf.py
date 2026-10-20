@@ -174,10 +174,7 @@ def build_readme_content() -> str:
 def is_payment_required(exc: Exception) -> bool:
     """Detect the paid-plan / billing rejection from a Hub API call."""
     response = getattr(exc, "response", None)
-    if getattr(response, "status_code", None) == 402:
-        return True
-    message = str(exc).lower()
-    return "payment" in message or "paid plan" in message
+    return getattr(response, "status_code", None) == 402
 
 
 def check_auth(api: HfApi) -> None:
@@ -235,7 +232,8 @@ def main() -> None:
                 "Hugging Face requires a paid plan to create Docker Spaces.\n"
                 "  Upgrade to PRO (personal) or Team/Enterprise (organizations), "
                 "or self-host with Docker instead.\n"
-                "  Details: HF_DEPLOY.md"
+                "  Details: HF_DEPLOY.md\n"
+                f"\nOriginal error: {exc}"
             ) from exc
         raise
     # Only change visibility when explicitly requested. create_repo is a no-op

@@ -52,7 +52,7 @@ docker build -t pubvox .
 docker run -d --name pubvox -p 8000:7860 -e PUBVOX_TTS_ENABLED=1 -v pubvox-data:/app/data pubvox
 ```
 
-The container listens on port `7860`; Compose maps it to `8000`. Override the container port with the `PORT` environment variable if needed.
+The container listens on port `7860`; Compose maps it to `8000`. To change the published port, update the `ports` mapping in `docker-compose.yml` (or the `-p` flag), not just the `PORT` variable, which only changes the port inside the container.
 
 For the PWA and Media Session API to work properly on mobile devices, PubVox must be served over HTTPS once you leave `localhost`. We recommend running it behind a reverse proxy like Caddy, Nginx Proxy Manager, or Traefik.
 
