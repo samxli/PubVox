@@ -65,6 +65,7 @@ For the PWA and Media Session API to work properly on mobile devices, PubVox mus
 | `PUBVOX_TTS_VOICE` | `en-US-AriaNeural` | Edge TTS voice name |
 | `PUBVOX_PASSWORD` | *(empty)* | When set, protected API routes and chapter audio require this password; the app shows an unlock screen once per browser session, and restarting the server requires unlocking again |
 | `PUBVOX_COOKIE_SECURE` | off | Set to `1` when PubVox is served over HTTPS so the session cookie is marked `Secure` |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` (uvicorn default) | Comma-separated proxy addresses whose `X-Forwarded-For` header is trusted. Set it to your reverse proxy's address so login rate limiting counts each visitor separately instead of lumping everyone under the proxy address |
 | `PORT` | `7860` (Docker image) | Container port used by the Docker entrypoint |
 
 With TTS disabled, uploads are still parsed and stored, but no audio is generated and books are marked unavailable.
@@ -73,7 +74,7 @@ With TTS disabled, uploads are still parsed and stored, but no audio is generate
 
 ### Docker (recommended)
 
-Any VPS, home server, NAS, or desktop that runs Docker can host PubVox for free. Use the Compose setup above and put it behind an HTTPS reverse proxy for mobile playback. Set `PUBVOX_PASSWORD` before exposing PubVox beyond your own devices; without it the app has no authentication, so keep it on your LAN or VPN. When serving through the HTTPS proxy, also set `PUBVOX_COOKIE_SECURE=1` so the session cookie is only sent over TLS. The Compose file publishes the port on loopback only (`127.0.0.1:8000:7860`); to serve it on your LAN, change the mapping to `8000:7860`.
+Any VPS, home server, NAS, or desktop that runs Docker can host PubVox for free. Use the Compose setup above and put it behind an HTTPS reverse proxy for mobile playback. Set `PUBVOX_PASSWORD` before exposing PubVox beyond your own devices; without it the app has no authentication, so keep it on your LAN or VPN. When serving through the HTTPS proxy, also set `PUBVOX_COOKIE_SECURE=1` so the session cookie is only sent over TLS. If the proxy is not on `127.0.0.1` (another container, or a platform ingress), set `FORWARDED_ALLOW_IPS` to its address; otherwise every visitor shares one login rate-limit bucket and five wrong passwords hold everyone at the unlock screen for a minute. The Compose file publishes the port on loopback only (`127.0.0.1:8000:7860`); to serve it on your LAN, change the mapping to `8000:7860`.
 
 ### Hugging Face Spaces (optional, paid)
 
