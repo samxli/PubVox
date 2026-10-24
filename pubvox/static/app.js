@@ -74,6 +74,7 @@ let progressSyncRunning = false;
 const pendingProgress = new Map();
 
 const dom = {
+  appShell: document.querySelector(".app-shell"),
   audio: document.querySelector("#audio"),
   bookList: document.querySelector("#book-list"),
   chapterList: document.querySelector("#chapter-list"),
@@ -96,13 +97,54 @@ const dom = {
   processingPercent: document.querySelector("#processing-percent"),
   processingBar: document.querySelector("#processing-bar"),
   processingStep: document.querySelector("#processing-step"),
+  authOverlay: document.querySelector("#auth-overlay"),
+  authForm: document.querySelector("#auth-form"),
+  authPassword: document.querySelector("#auth-password"),
+  authError: document.querySelector("#auth-error"),
+  refreshBooks: document.querySelector("#refresh-books"),
 };
+
+let authFocusReturnTarget = null;
+
+function showAuthOverlay() {
+  if (!dom.authOverlay.classList.contains("hidden")) {
+    return;
+  }
+
+  authFocusReturnTarget = document.activeElement;
+  dom.authOverlay.classList.remove("hidden");
+  dom.appShell.setAttribute("inert", "");
+  dom.authPassword.focus();
+}
+
+function hideAuthOverlay() {
+  dom.authOverlay.classList.add("hidden");
+  dom.appShell.removeAttribute("inert");
+
+  const target = authFocusReturnTarget;
+  authFocusReturnTarget = null;
+  if (target instanceof HTMLElement && target !== document.body && target.isConnected) {
+    target.focus();
+    if (document.activeElement === target) {
+      return;
+    }
+  }
+
+  if (dom.playToggle.disabled) {
+    dom.refreshBooks.focus();
+  } else {
+    dom.playToggle.focus();
+  }
+}
 
 /** Fetch JSON from the backend and normalize API errors for the UI. */
 async function api(path, options = {}) {
   const response = await fetch(path, options);
 
   if (!response.ok) {
+    if (response.status === 401) {
+      showAuthOverlay();
+    }
     throw new Error(await responseErrorMessage(response));
   }
 
@@ -708,6 +750,15 @@ function configureAudio() {
   seekAudioToState();
 }
 
+function reloadCachedAudio() {
+  if (!dom.audio.dataset.source || state.isPlaying) {
+    return;
+  }
+
+  state.isWaitingForStateSeek = true;
+  dom.audio.load();
+}
+
 async function setPlaying(isPlaying) {
   const sequence = ++state.playbackRequestSeq;
   // Fall back to the cached snapshot's audio URL during the bootstrap window
@@ -1190,6 +1241,33 @@ state.syncTimer = setInterval(() => {
     syncProgress();
   }
 }, 5000);
+
+dom.authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  dom.authError.classList.add("hidden");
+  try {
+    // Plain fetch, not api(): a failed login is also a 401 and must not re-open the overlay.
+    const response = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: dom.authPassword.value }),
+    });
+    if (!response.ok) {
+      dom.authError.textContent = await responseErrorMessage(response);
+      dom.authError.classList.remove("hidden");
+      return;
+    }
+    hideAuthOverlay();
+    dom.authPassword.value = "";
+    reloadCachedAudio();
+    loadBooks().catch((error) => {
+      dom.bookList.replaceChildren(emptyState(error.message));
+    });
+  } catch {
+    dom.authError.textContent = "Unable to reach the server.";
+    dom.authError.classList.remove("hidden");
+  }
+});
 
 restoreResumeCache();
 loadBooks().catch((error) => {

@@ -23,7 +23,7 @@ Check the Hugging Face pricing page before deploying; the numbers and plan requi
 2. Creates the Space (Docker SDK) and enforces the requested visibility.
 3. Creates a private Storage Bucket named `<namespace>/<space-name>-data` and mounts it at `/app/data`.
 4. Requests the selected hardware tier (default `cpu-basic`).
-5. Sets the Space variables (`PUBVOX_DATA_DIR`, `PUBVOX_TTS_ENABLED`, `PUBVOX_TTS_VOICE`).
+5. Sets the Space variables (`PUBVOX_DATA_DIR`, `PUBVOX_COOKIE_SECURE`, `PUBVOX_TTS_ENABLED`, `PUBVOX_TTS_VOICE`).
 6. Uploads `main.py`, `pubvox/`, `requirements.txt`, `Dockerfile`, and the docs, with YAML frontmatter prepended to the README so the GitHub copy stays clean.
 
 ## Prerequisites
@@ -41,7 +41,7 @@ export HF_TOKEN=<your-hf-token>
 python scripts/deploy_hf.py --repo-id <your-username>/pubvox --private --tts-enabled
 ```
 
-New Spaces are public by default. Pass `--private` for a personal library; PubVox has no authentication, so a public Space exposes your uploaded books and generated audio to anyone who can reach the URL. Rerunning the script without `--private` leaves an existing Space's visibility unchanged, so an already-private Space stays private.
+New Spaces are public by default. Pass `--private` for a personal library. Also set a `PUBVOX_PASSWORD` Space secret (see [Security notes](#security-notes)) — without it a public Space exposes your uploaded books and generated audio to anyone who can reach the URL. Rerunning the script without `--private` leaves an existing Space's visibility unchanged, so an already-private Space stays private.
 
 Useful flags:
 
@@ -67,6 +67,7 @@ If the bucket already exists and is public, the script stops with an error. Make
 | Variable | Value set by the script |
 | --- | --- |
 | `PUBVOX_DATA_DIR` | `/app/data` |
+| `PUBVOX_COOKIE_SECURE` | `1` (Spaces serve HTTPS) |
 | `PUBVOX_TTS_ENABLED` | `1` with `--tts-enabled`, otherwise `0` |
 | `PUBVOX_TTS_VOICE` | `--tts-voice` value, only when TTS is enabled |
 
@@ -88,6 +89,6 @@ If the bucket already exists and is public, the script stops with an error. Make
 
 See [SECURITY.md](SECURITY.md) for the general policy. For Spaces specifically:
 
-- PubVox serves a single shared library with no authentication. Keep the Space private unless you intend to publish your library.
+- PubVox serves a single shared library. Set a `PUBVOX_PASSWORD` Space secret to require a password, and keep the Space private unless you intend to publish your library.
 - Keep the storage bucket private; it contains the SQLite database and your ePub files.
 - Store any future credentials as Space secrets, not as committed files or public variables.

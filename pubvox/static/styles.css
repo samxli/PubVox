@@ -551,3 +551,48 @@ p {
     justify-content: flex-end;
   }
 }
+
+.auth-overlay.hidden {
+  display: none;
+}
+
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 18, 12, 0.88);
+  backdrop-filter: blur(6px);
+}
+
+.auth-card {
+  display: grid;
+  gap: 14px;
+  width: min(360px, 100%);
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.auth-card input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.auth-card .secondary-button {
+  justify-self: center;
+  padding-inline: 28px;
+}
+
+.auth-error {
+  color: var(--danger);
+  text-align: center;
+}
