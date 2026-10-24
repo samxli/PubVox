@@ -1,21 +1,22 @@
-FROM python:3.12-slim
+FROM python:3.12-alpine
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PUBVOX_DATA_DIR=/app/data \
     PORT=7860
 
-WORKDIR /app
-
-RUN groupadd --gid 1000 pubvox \
-    && useradd --uid 1000 --gid pubvox --home-dir /app --shell /usr/sbin/nologin pubvox \
+RUN addgroup -g 1000 pubvox \
+    && adduser -D -u 1000 -G pubvox -h /app -s /sbin/nologin pubvox \
     && mkdir -p /app/data \
     && chown pubvox:pubvox /app/data
+
+WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY main.py ./
+COPY pubvox ./pubvox
 
 EXPOSE 7860
 
