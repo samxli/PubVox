@@ -74,6 +74,7 @@ let progressSyncRunning = false;
 const pendingProgress = new Map();
 
 const dom = {
+  appShell: document.querySelector(".app-shell"),
   audio: document.querySelector("#audio"),
   bookList: document.querySelector("#book-list"),
   chapterList: document.querySelector("#chapter-list"),
@@ -100,11 +101,40 @@ const dom = {
   authForm: document.querySelector("#auth-form"),
   authPassword: document.querySelector("#auth-password"),
   authError: document.querySelector("#auth-error"),
+  refreshBooks: document.querySelector("#refresh-books"),
 };
 
+let authFocusReturnTarget = null;
+
 function showAuthOverlay() {
+  if (!dom.authOverlay.classList.contains("hidden")) {
+    return;
+  }
+
+  authFocusReturnTarget = document.activeElement;
   dom.authOverlay.classList.remove("hidden");
+  dom.appShell.setAttribute("inert", "");
   dom.authPassword.focus();
+}
+
+function hideAuthOverlay() {
+  dom.authOverlay.classList.add("hidden");
+  dom.appShell.removeAttribute("inert");
+
+  const target = authFocusReturnTarget;
+  authFocusReturnTarget = null;
+  if (target instanceof HTMLElement && target !== document.body && target.isConnected) {
+    target.focus();
+    if (document.activeElement === target) {
+      return;
+    }
+  }
+
+  if (dom.playToggle.disabled) {
+    dom.refreshBooks.focus();
+  } else {
+    dom.playToggle.focus();
+  }
 }
 
 /** Fetch JSON from the backend and normalize API errors for the UI. */
@@ -720,6 +750,15 @@ function configureAudio() {
   seekAudioToState();
 }
 
+function reloadCachedAudio() {
+  if (!dom.audio.dataset.source || state.isPlaying) {
+    return;
+  }
+
+  state.isWaitingForStateSeek = true;
+  dom.audio.load();
+}
+
 async function setPlaying(isPlaying) {
   const sequence = ++state.playbackRequestSeq;
   // Fall back to the cached snapshot's audio URL during the bootstrap window
@@ -1214,13 +1253,16 @@ dom.authForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({ password: dom.authPassword.value }),
     });
     if (!response.ok) {
-      dom.authError.textContent = "Wrong password.";
+      dom.authError.textContent = await responseErrorMessage(response);
       dom.authError.classList.remove("hidden");
       return;
     }
-    dom.authOverlay.classList.add("hidden");
+    hideAuthOverlay();
     dom.authPassword.value = "";
-    loadBooks().catch(() => {});
+    reloadCachedAudio();
+    loadBooks().catch((error) => {
+      dom.bookList.replaceChildren(emptyState(error.message));
+    });
   } catch {
     dom.authError.textContent = "Unable to reach the server.";
     dom.authError.classList.remove("hidden");

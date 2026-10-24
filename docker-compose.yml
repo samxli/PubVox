@@ -7,6 +7,8 @@ services:
     ports:
       - "127.0.0.1:8000:7860"
     environment:
+      PUBVOX_PASSWORD: ${PUBVOX_PASSWORD:-}
+      PUBVOX_COOKIE_SECURE: ${PUBVOX_COOKIE_SECURE:-0}
       PUBVOX_TTS_ENABLED: ${PUBVOX_TTS_ENABLED:-1}
     volumes:
       - pubvox-data:/app/data

@@ -67,6 +67,7 @@ HF_README_FRONTMATTER = textwrap.dedent("""\
 
 DEFAULT_VARIABLES: dict[str, str] = {
     "PUBVOX_DATA_DIR": "/app/data",
+    "PUBVOX_COOKIE_SECURE": "1",
 }
 
 DEPLOY_PATHS = (

@@ -28,7 +28,7 @@ To prioritize simplicity and minimize the footprint, the system uses a **Monolit
 ### 3.2. Backend & TTS Processing (Python Monolith)
 
 - **Framework:** FastAPI (Python). Python is ideal for handling ePub extraction and TTS libraries.
-- **Authentication:** None in the current slice; a single seeded local user shares the library. Deploy privately.
+- **Authentication:** Optional shared-password gate via `PUBVOX_PASSWORD`; protected API routes and chapter audio require a session cookie, while `/api/login` and `/api/health` stay public. There are no per-user accounts; a single seeded local user shares the library.
 - **ePub Processing:**
   - Uploaded `.epub` files are parsed using libraries like `EbookLib` and `BeautifulSoup`.
   - Text is logically split into chapters.

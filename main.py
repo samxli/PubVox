@@ -14,16 +14,17 @@ import re
 import secrets
 from pathlib import Path
 import shutil
+import time
 from typing import Any
 import uuid
 
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from pubvox import database, tts
-from pubvox.config import AUDIO_DIR, PASSWORD, STATIC_DIR, TTS_ENABLED, UPLOAD_DIR
+from pubvox.config import AUDIO_DIR, COOKIE_SECURE, PASSWORD, STATIC_DIR, TTS_ENABLED, UPLOAD_DIR
 from pubvox.epub_parser import parse_epub
 
 
@@ -126,9 +127,61 @@ app.add_middleware(UploadSizeLimitMiddleware)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 SESSION_COOKIE = "pubvox_session"
+SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+LOGIN_RATE_LIMIT = 5
+LOGIN_RATE_WINDOW_SECONDS = 60
 AUTH_EXEMPT_PATHS = {"/api/login", "/api/health"}
-# shortcut: sessions live in-process only, so a restart forces re-login; fine for single-user self-hosting
-session_tokens: set[str] = set()
+# In-process sessions: a server restart invalidates every token.
+session_tokens: dict[str, float] = {}
+login_attempts: dict[str, list[float]] = {}
+
+
+def session_is_valid(token: str | None) -> bool:
+    if not token:
+        return False
+    expires_at = session_tokens.get(token)
+    if expires_at is None:
+        return False
+    if expires_at <= time.time():
+        session_tokens.pop(token, None)
+        return False
+    return True
+
+
+def prune_expired_sessions(now: float) -> None:
+    expired = [
+        token
+        for token, expires_at in list(session_tokens.items())
+        if expires_at <= now
+    ]
+    for token in expired:
+        session_tokens.pop(token, None)
+
+
+def prune_login_attempts(now: float) -> None:
+    stale = [
+        client
+        for client, attempts in list(login_attempts.items())
+        if not attempts or now - attempts[-1] >= LOGIN_RATE_WINDOW_SECONDS
+    ]
+    for client in stale:
+        login_attempts.pop(client, None)
+
+
+def login_retry_after(client: str, now: float) -> int | None:
+    attempts = [
+        attempt
+        for attempt in login_attempts.get(client, ())
+        if now - attempt < LOGIN_RATE_WINDOW_SECONDS
+    ]
+    if attempts:
+        login_attempts[client] = attempts
+    else:
+        login_attempts.pop(client, None)
+
+    if len(attempts) < LOGIN_RATE_LIMIT:
+        return None
+    return max(1, int(LOGIN_RATE_WINDOW_SECONDS - (now - attempts[0])) + 1)
 
 
 @app.middleware("http")
@@ -138,7 +191,7 @@ async def require_auth(request: Any, call_next: Any) -> Any:
         PASSWORD
         and request.url.path.startswith("/api/")
         and request.url.path not in AUTH_EXEMPT_PATHS
-        and request.cookies.get(SESSION_COOKIE) not in session_tokens
+        and not session_is_valid(request.cookies.get(SESSION_COOKIE))
     ):
         return JSONResponse({"detail": "Unauthorized."}, status_code=401)
     return await call_next(request)
@@ -151,14 +204,37 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/api/login")
-def login(body: LoginRequest, response: Response) -> dict[str, bool]:
+def login(body: LoginRequest, request: Request, response: Response) -> dict[str, bool]:
     """Exchange the configured password for an httponly session cookie."""
-    if not PASSWORD or not secrets.compare_digest(body.password, PASSWORD):
+    if not PASSWORD:
         raise HTTPException(status_code=401, detail="Incorrect password.")
 
+    now = time.time()
+    prune_login_attempts(now)
+    client = request.client.host if request.client else "unknown"
+    retry_after = login_retry_after(client, now)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    if not secrets.compare_digest(body.password.encode("utf-8"), PASSWORD.encode("utf-8")):
+        login_attempts.setdefault(client, []).append(now)
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    login_attempts.pop(client, None)
+    prune_expired_sessions(now)
     token = secrets.token_urlsafe(32)
-    session_tokens.add(token)
-    response.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="lax")
+    session_tokens[token] = now + SESSION_TTL_SECONDS
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=COOKIE_SECURE,
+    )
     return {"ok": True}
 
 

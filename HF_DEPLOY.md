@@ -23,7 +23,7 @@ Check the Hugging Face pricing page before deploying; the numbers and plan requi
 2. Creates the Space (Docker SDK) and enforces the requested visibility.
 3. Creates a private Storage Bucket named `<namespace>/<space-name>-data` and mounts it at `/app/data`.
 4. Requests the selected hardware tier (default `cpu-basic`).
-5. Sets the Space variables (`PUBVOX_DATA_DIR`, `PUBVOX_TTS_ENABLED`, `PUBVOX_TTS_VOICE`).
+5. Sets the Space variables (`PUBVOX_DATA_DIR`, `PUBVOX_COOKIE_SECURE`, `PUBVOX_TTS_ENABLED`, `PUBVOX_TTS_VOICE`).
 6. Uploads `main.py`, `pubvox/`, `requirements.txt`, `Dockerfile`, and the docs, with YAML frontmatter prepended to the README so the GitHub copy stays clean.
 
 ## Prerequisites
@@ -67,6 +67,7 @@ If the bucket already exists and is public, the script stops with an error. Make
 | Variable | Value set by the script |
 | --- | --- |
 | `PUBVOX_DATA_DIR` | `/app/data` |
+| `PUBVOX_COOKIE_SECURE` | `1` (Spaces serve HTTPS) |
 | `PUBVOX_TTS_ENABLED` | `1` with `--tts-enabled`, otherwise `0` |
 | `PUBVOX_TTS_VOICE` | `--tts-voice` value, only when TTS is enabled |
 
