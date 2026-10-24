@@ -2,7 +2,7 @@ name: PR Agent
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review]
   issue_comment:
 
 jobs:
@@ -20,7 +20,9 @@ jobs:
         uses: the-pr-agent/pr-agent@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENROUTER.KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER__KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CONFIG__MODEL: openrouter/auto
+          CONFIG__FALLBACK_MODELS: '["openrouter/free"]'
           github_action_config.auto_review: "true"
           github_action_config.auto_describe: "true"
           github_action_config.auto_improve: "true"
