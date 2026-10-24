@@ -127,6 +127,16 @@
       </section>
     </div>
 
+    <div id="auth-overlay" class="auth-overlay hidden" role="dialog" aria-modal="true" aria-label="Unlock PubVox">
+      <form id="auth-form" class="auth-card">
+        <h2>PubVox is locked</h2>
+        <p class="muted">Enter the server password to unlock your library.</p>
+        <input id="auth-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password">
+        <button class="secondary-button" type="submit">Unlock</button>
+        <p id="auth-error" class="auth-error hidden" role="alert">Wrong password.</p>
+      </form>
+    </div>
+
     <script src="/static/app.js?v=__PUBVOX_ASSET_VERSION__"></script>
   </body>
 </html>
